@@ -10,7 +10,17 @@ from telethon import events
 
 from ..assets import AssetService
 from ..config import Config
-from ..domain import Color, Delivery, Draft, Position, Quality, Settings, Transition, number
+from ..domain import (
+    Color,
+    Delivery,
+    Draft,
+    GifRange,
+    Position,
+    Quality,
+    Settings,
+    Transition,
+    number,
+)
 from ..jobs import Activity, JobService
 from ..media.probe import inspect
 from ..storage import Store
@@ -211,6 +221,9 @@ class Controller:
                 if not start < end <= info.duration:
                     raise ValueError("شروع و پایان باید داخل مدت ویدیو و به ترتیب باشند.")
                 self.draft.trim_start, self.draft.trim_end = start, end
+        elif pending.kind == "gif":
+            await self.start_gif(pending.scope, GifRange.from_text(text))
+            return
         elif pending.kind == "value":
             target, field = pending.field.split(".")
             if target in {"intro", "outro"}:
@@ -223,6 +236,17 @@ class Controller:
         self.save_settings(pending.scope, settings)
         self.pending = None
         await self.back(pending.scope)
+
+    async def start_gif(self, scope: str, selection: GifRange) -> None:
+        self.settings(scope)
+        info = await inspect(Path(self.draft.source), self.config)
+        selection.resolve(info.duration)
+        self.settings(scope)
+        snapshot = Draft.from_dict(self.draft.to_dict())
+        self.pending = None
+        self.activity.start(
+            "تبدیل به GIF", lambda: self.jobs.run(snapshot, False, self.show, gif=selection)
+        )
 
     async def upload(self, event, pending: Pending) -> None:
         try:
@@ -406,6 +430,18 @@ class Controller:
         elif action == "trim":
             await self.ask(
                 Pending("trim", scope), "شروع و پایان را به ثانیه بفرستید؛ مثال: 5 35. حذف برش: -"
+            )
+        elif action == "gif":
+            info = await inspect(Path(self.draft.source), self.config)
+            self.settings(scope)
+            await self.say(views.gif_text(info.duration), views.gif_buttons(self.draft))
+        elif action == "gif_all":
+            await self.start_gif(scope, GifRange())
+        elif action == "gif_range":
+            await self.ask(
+                Pending("gif", scope),
+                "شروع و پایان GIF را به ثانیه بفرستید؛ مثال: 12 20 یا ۱۲ تا ۲۰.\n"
+                "اعداد اعشاری هم مجازند؛ برای کل ویدیو «کل» بفرستید.",
             )
         elif action == "mute":
             self.draft.mute = not self.draft.mute

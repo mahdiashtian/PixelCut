@@ -12,11 +12,22 @@ async def check(config: Config) -> None:
     encoders = (await capture([config.ffmpeg, "-hide_banner", "-encoders"])).decode()
     missing = [
         name
-        for name in ("xfade", "acrossfade", "overlay", "alphamerge", "lut", "concat")
+        for name in (
+            "xfade",
+            "acrossfade",
+            "overlay",
+            "alphamerge",
+            "lut",
+            "concat",
+            "palettegen",
+            "paletteuse",
+        )
         if f" {name} " not in filters
     ]
     missing.extend(
-        name for name in ("libx264", "ffv1", "aac", "flac") if f" {name} " not in encoders
+        name
+        for name in ("libx264", "ffv1", "aac", "pcm_f32le", "gif")
+        if f" {name} " not in encoders
     )
     if missing:
         raise ValueError("FFmpeg فاقد قابلیت‌های لازم است: " + ", ".join(missing))

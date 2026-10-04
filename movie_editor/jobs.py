@@ -4,12 +4,14 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 
 from telethon.errors import MessageNotModifiedError
 from telethon.tl.types import DocumentAttributeVideo
 
 from .config import Config
-from .domain import Delivery, Draft, Quality
+from .domain import Delivery, Draft, GifRange, Quality
+from .media.gif import GifExporter
 from .media.renderer import Renderer
 from .storage import Store
 from .telegram.views import button
@@ -51,17 +53,35 @@ class Activity:
 
 
 class JobService:
-    def __init__(self, client, config: Config, store: Store, renderer: Renderer):
+    def __init__(
+        self,
+        client,
+        config: Config,
+        store: Store,
+        renderer: Renderer,
+        gif_exporter: GifExporter | None = None,
+    ):
         self.client, self.config, self.store, self.renderer = client, config, store, renderer
+        self.gif_exporter = gif_exporter or GifExporter(config)
 
     async def run(
-        self, draft: Draft, preview: bool, refresh: Callable[[], Awaitable[None]]
+        self,
+        draft: Draft,
+        preview: bool,
+        refresh: Callable[[], Awaitable[None]],
+        *,
+        gif: GifRange | None = None,
     ) -> None:
         # Snapshot prevents a later settings change from mutating a running render.
         draft = Draft.from_dict(draft.to_dict())
-        folder = self.config.data_dir / "jobs" / draft.id / ("preview" if preview else "render")
-        status = await self.client.send_message(self.config.admin_id, "در حال آماده‌سازی رندر…")
+        mode = "gif" if gif is not None else "preview" if preview else "render"
+        folder = self.config.data_dir / "jobs" / draft.id / mode
+        status = await self.client.send_message(
+            self.config.admin_id,
+            "در حال آماده‌سازی GIF…" if gif is not None else "در حال آماده‌سازی رندر…",
+        )
         last_update = 0.0
+        operation = "تبدیل به GIF" if gif is not None else "رندر"
 
         async def update(message: str, running: bool = True) -> None:
             try:
@@ -75,7 +95,7 @@ class JobService:
             nonlocal last_update
             if time.monotonic() - last_update >= 5:
                 last_update = time.monotonic()
-                await update(f"در حال رندر: {percent:.0f}٪\nبرای توقف: /cancel")
+                await update(f"در حال {operation}: {percent:.0f}٪\nبرای توقف: /cancel")
 
         async def upload_progress(current: int, total: int) -> None:
             nonlocal last_update
@@ -84,12 +104,21 @@ class JobService:
                 await update(f"در حال ارسال خروجی: {current / total * 100:.0f}٪")
 
         try:
-            result = await self.renderer.render(draft, folder, render_progress, preview=preview)
+            if gif is not None:
+                result = await self.gif_exporter.convert(
+                    Path(draft.source), gif, folder, render_progress
+                )
+            else:
+                result = await self.renderer.render(draft, folder, render_progress, preview=preview)
             await update("رندر تمام شد؛ در حال ارسال…")
             thumb = await self.renderer.thumbnail(result.path, folder / "thumb.jpg")
-            as_file = not preview and (
-                draft.settings.delivery == Delivery.FILE
-                or draft.settings.quality == Quality.LOSSLESS
+            as_file = (
+                gif is not None
+                or not preview
+                and (
+                    draft.settings.delivery == Delivery.FILE
+                    or draft.settings.quality == Quality.LOSSLESS
+                )
             )
             attributes = (
                 []
@@ -118,11 +147,14 @@ class JobService:
                 caption=caption,
                 parse_mode=None,
                 progress_callback=upload_progress,
+                mime_type="image/gif" if gif is not None else None,
             )
             if not preview:
                 self.store.record(draft.original_name, "done", result.notice)
             await update(
-                "پیش‌نمایش ارسال شد."
+                "GIF ارسال شد؛ پروژه برای ویرایش و تبدیل دوباره حفظ شده است."
+                if gif is not None
+                else "پیش‌نمایش ارسال شد."
                 if preview
                 else "خروجی ارسال شد؛ امکان تغییر و رندر دوباره دارید.",
                 running=False,
@@ -146,7 +178,14 @@ class JobService:
             )
         finally:
             # Keep tiny filter/log files for diagnostics; large outputs can be regenerated.
-            for name in ("edited.mp4", "edited.mkv", "text.png", "logo.png", "thumb.jpg"):
+            for name in (
+                "edited.mp4",
+                "edited.mkv",
+                "edited.gif",
+                "text.png",
+                "logo.png",
+                "thumb.jpg",
+            ):
                 (folder / name).unlink(missing_ok=True)
         # The completion menu must be usable after Activity marks this task done.
         await refresh()

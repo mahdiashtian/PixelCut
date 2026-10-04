@@ -45,6 +45,32 @@ class Delivery(StrEnum):
     VIDEO = "video"
 
 
+@dataclass(frozen=True)
+class GifRange:
+    start: float = 0
+    end: float | None = None
+
+    def resolve(self, duration: float) -> tuple[float, float]:
+        start = number(self.start, 0, 86400, "شروع")
+        end = duration if self.end is None else number(self.end, 0, 86400, "پایان")
+        if not start < end <= duration:
+            raise ValueError("شروع و پایان GIF باید داخل مدت ویدیو و به ترتیب باشند.")
+        return start, end
+
+    @classmethod
+    def from_text(cls, text: str) -> "GifRange":
+        if text.strip().lower() in {"کل", "کل فیلم", "کل ویدیو", "all"}:
+            return cls()
+        pieces = text.replace("،", " ").replace("تا", " ").split()
+        if len(pieces) != 2:
+            raise ValueError("دو عدد ثانیه بفرستید؛ مثال: 12 20 یا ۱۲ تا ۲۰.")
+        start = number(pieces[0], 0, 86400, "شروع")
+        end = number(pieces[1], 0, 86400, "پایان")
+        if end <= start:
+            raise ValueError("پایان GIF باید بعد از شروع باشد.")
+        return cls(start, end)
+
+
 def number(value: Any, low: float, high: float, label: str) -> float:
     if isinstance(value, str):
         value = value.strip().removesuffix("٪").removesuffix("%").replace("٫", ".")

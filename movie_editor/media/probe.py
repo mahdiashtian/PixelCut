@@ -43,6 +43,9 @@ async def inspect(path: Path, config: Config, count_frames: bool = False) -> Med
     args = [config.ffprobe, "-v", "error", "-show_streams", "-show_format", "-of", "json"]
     if count_frames:
         args.append("-count_frames")
+    if path.suffix.lower() == ".gif":
+        # Read the actual centisecond delays instead of clamping fast GIFs to 100 ms.
+        args.extend(["-min_delay", "1"])
     args.append(str(path))
     data = json.loads(await capture(args, timeout=300 if count_frames else 60))
     streams = data.get("streams", [])

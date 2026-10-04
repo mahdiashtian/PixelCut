@@ -1,8 +1,6 @@
 """Inspect inputs, prepare overlays, then encode once and verify the result."""
 
 import asyncio
-import shutil
-from dataclasses import dataclass
 from pathlib import Path
 
 from ..config import Config
@@ -11,15 +9,10 @@ from ..storage import Store
 from .formats import PixelLayout, layout_for
 from .graph import Segment, build_graph
 from .graphics import find_font, logo_overlay, text_overlay
-from .probe import MediaInfo, inspect
+from .limits import check_output, check_space, guarded_progress
+from .probe import inspect
 from .process import Progress, capture, encode
-
-
-@dataclass(frozen=True)
-class RenderResult:
-    path: Path
-    info: MediaInfo
-    notice: str
+from .result import RenderResult
 
 
 class Renderer:
@@ -35,8 +28,7 @@ class Renderer:
             draft.settings.quality = Quality.FAST
         draft.validate()
         folder.mkdir(parents=True, exist_ok=True)
-        if shutil.disk_usage(folder).free < self.config.min_free_disk_mb * 1024**2:
-            raise ValueError("فضای آزاد دیسک برای رندر کافی نیست.")
+        check_space(self.config, folder)
         paths: list[Path] = []
         if draft.intro_id:
             paths.append(Path(self.store.asset(draft.intro_id, "intro").path))
@@ -191,26 +183,15 @@ class Renderer:
                 args.extend([flag, value])
         args.extend(["-progress", "pipe:1", "-nostats", str(output)])
 
-        async def guarded_progress(percent: float) -> None:
-            if output.exists() and output.stat().st_size > self.config.max_upload_mb * 1024**2:
-                raise ValueError(
-                    "حجم خروجی از حد ارسال گذشت؛ برش کوتاه‌تر یا کیفیت دیگری انتخاب کنید."
-                )
-            if shutil.disk_usage(folder).free < self.config.min_free_disk_mb * 1024**2:
-                raise ValueError("فضای آزاد دیسک کم شد؛ رندر متوقف شد.")
-            if progress:
-                await progress(percent)
-
         await encode(
             args,
             folder / "ffmpeg.log",
             graph.duration,
             self.config.max_render_seconds,
-            guarded_progress,
+            guarded_progress(self.config, output, progress),
         )
         result = await inspect(output, self.config)
-        if output.stat().st_size > self.config.max_upload_mb * 1024**2:
-            raise ValueError("خروجی از حد ارسال بزرگ‌تر است؛ کیفیت یا برش را تغییر دهید.")
+        check_output(self.config, output)
         if (result.width, result.height) != (width, height):
             raise ValueError("ابعاد خروجی با ابعاد مورد انتظار تطابق ندارد.")
         if abs(result.duration - graph.duration) > max(0.25, 3 / float(main.fps)):
