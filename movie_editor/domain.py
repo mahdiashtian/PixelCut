@@ -45,6 +45,78 @@ class Delivery(StrEnum):
     VIDEO = "video"
 
 
+class Look(StrEnum):
+    NONE = "none"
+    BW = "bw"
+    WARM = "warm"
+    COOL = "cool"
+    SEPIA = "sepia"
+    VINTAGE = "vintage"
+    CINEMA = "cinema"
+    FADE = "fade"
+    VIVID = "vivid"
+    NOIR = "noir"
+    DNT1 = "dnt1"
+    DNT2 = "dnt2"
+    DNT3 = "dnt3"
+    DNT4 = "dnt4"
+    DNT5 = "dnt5"
+    CUSTOM = "custom"
+
+    @property
+    def needs_lut(self) -> bool:
+        return self == Look.CUSTOM or self.value.startswith("dnt")
+
+
+GRADE_LIMITS = {
+    "strength": (0, 100, "شدت فیلتر"),
+    "brightness": (-100, 100, "روشنایی"),
+    "contrast": (0, 200, "کنتراست"),
+    "saturation": (0, 200, "اشباع رنگ"),
+    "gamma": (0.5, 2, "گاما"),
+    "temperature": (-100, 100, "گرمی / سردی"),
+    "vignette": (0, 100, "تیرگی لبه‌ها"),
+}
+
+
+@dataclass
+class ColorGrade:
+    look: Look = Look.NONE
+    strength: float = 100
+    brightness: float = 0
+    contrast: float = 100
+    saturation: float = 100
+    gamma: float = 1
+    temperature: float = 0
+    vignette: float = 0
+    lut_id: str | None = None
+
+    def validate(self) -> None:
+        self.look = Look(self.look)
+        for name, (low, high, label) in GRADE_LIMITS.items():
+            setattr(self, name, number(getattr(self, name), low, high, label))
+        if self.look.needs_lut and not self.lut_id:
+            raise ValueError("این فیلتر به LUT مرجع نیاز دارد؛ ابتدا فایل .cube آن را انتخاب کنید.")
+
+    @property
+    def active(self) -> bool:
+        return (
+            (self.look != Look.NONE and self.strength > 0)
+            or self.brightness != 0
+            or self.contrast != 100
+            or self.saturation != 100
+            or self.gamma != 1
+            or self.temperature != 0
+            or self.vignette != 0
+        )
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ColorGrade":
+        obj = cls(**data)
+        obj.validate()
+        return obj
+
+
 @dataclass(frozen=True)
 class GifRange:
     start: float = 0
@@ -133,6 +205,7 @@ class Settings:
     outro_join: Join = field(default_factory=Join)
     quality: Quality = Quality.LOSSLESS
     delivery: Delivery = Delivery.FILE
+    color_grade: ColorGrade = field(default_factory=ColorGrade)
 
     def validate(self) -> None:
         self.text_style.validate()
@@ -141,6 +214,7 @@ class Settings:
         self.outro_join.validate()
         self.quality = Quality(self.quality)
         self.delivery = Delivery(self.delivery)
+        self.color_grade.validate()
 
     @classmethod
     def from_dict(cls, data: dict) -> "Settings":
@@ -151,6 +225,7 @@ class Settings:
             outro_join=Join.from_dict(data["outro_join"]),
             quality=Quality(data["quality"]),
             delivery=Delivery(data["delivery"]),
+            color_grade=ColorGrade.from_dict(data.get("color_grade", {})),
         )
         obj.validate()
         return obj

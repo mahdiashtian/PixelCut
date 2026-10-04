@@ -8,6 +8,7 @@ from PIL import Image, ImageFont
 
 from .config import Config
 from .domain import Asset
+from .media.lut import validate_cube
 from .media.probe import inspect
 from .storage import Store
 
@@ -26,6 +27,7 @@ class AssetService:
             "logo": {".png", ".webp", ".jpg", ".jpeg"},
             "intro": VIDEO_EXTENSIONS,
             "outro": VIDEO_EXTENSIONS,
+            "lut": {".cube"},
         }
         if extension not in allowed[kind]:
             raise ValueError("پسوند مناسب نیست. مجاز: " + ", ".join(sorted(allowed[kind])))
@@ -48,6 +50,8 @@ class AssetService:
                     image.verify()
 
             await asyncio.to_thread(check_logo)
+        elif kind == "lut":
+            await asyncio.to_thread(validate_cube, path)
         else:
             await inspect(path, self.config)
         asset = Asset(uuid4().hex[:12], kind, Path(filename).name[:80], str(path))

@@ -1,6 +1,7 @@
 """Cancellable subprocess execution without a shell."""
 
 import asyncio
+import shutil
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
@@ -20,9 +21,14 @@ async def stop(process: asyncio.subprocess.Process) -> None:
             await process.wait()
 
 
-async def capture(args: list[str], timeout: float = 60) -> bytes:
+def command(args: list[str]) -> list[str]:
+    program = shutil.which(args[0])
+    return [str(Path(program).resolve()) if program else args[0], *args[1:]]
+
+
+async def capture(args: list[str], timeout: float = 60, *, cwd: Path | None = None) -> bytes:
     process = await asyncio.create_subprocess_exec(
-        *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        *command(args), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, cwd=cwd
     )
     try:
         async with asyncio.timeout(timeout):
@@ -37,12 +43,21 @@ async def capture(args: list[str], timeout: float = 60) -> bytes:
 
 
 async def encode(
-    args: list[str], log_path: Path, duration: float, timeout: float, progress: Progress | None
+    args: list[str],
+    log_path: Path,
+    duration: float,
+    timeout: float,
+    progress: Progress | None,
+    *,
+    cwd: Path | None = None,
 ) -> None:
     # A disk log prevents an undrained stderr pipe from deadlocking a long render.
     with log_path.open("wb") as log:
         process = await asyncio.create_subprocess_exec(
-            *args, stdout=asyncio.subprocess.PIPE, stderr=log
+            *command(args),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=log,
+            cwd=cwd,
         )
         try:
             async with asyncio.timeout(timeout):

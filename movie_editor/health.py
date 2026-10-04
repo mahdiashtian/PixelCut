@@ -21,6 +21,12 @@ async def check(config: Config) -> None:
             "concat",
             "palettegen",
             "paletteuse",
+            "lutrgb",
+            "lut3d",
+            "colorbalance",
+            "colorchannelmixer",
+            "curves",
+            "vignette",
         )
         if f" {name} " not in filters
     ]

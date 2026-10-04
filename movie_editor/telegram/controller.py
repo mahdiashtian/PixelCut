@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from telethon import events
@@ -12,9 +12,11 @@ from ..assets import AssetService
 from ..config import Config
 from ..domain import (
     Color,
+    ColorGrade,
     Delivery,
     Draft,
     GifRange,
+    Look,
     Position,
     Quality,
     Settings,
@@ -102,6 +104,7 @@ class Controller:
                 [b("ظاهر و فونت متن", "s:style:text"), b("ظاهر لوگو", "s:style:logo")],
                 [b("ترنزیشن ابتدا", "s:join:intro"), b("ترنزیشن انتها", "s:join:outro")],
                 [b("کیفیت", "s:quality"), b("نوع ارسال", "s:delivery")],
+                [b("فیلتر و اصلاح رنگ", "s:filters")],
                 [b("بازنشانی پیش‌فرض‌ها", "s:reset"), b("بازگشت", "g:home")],
             ],
         )
@@ -149,7 +152,7 @@ class Controller:
                     await self.show()
             elif self.pending:
                 pending = self.pending
-                if pending.kind in {"font", "logo", "intro", "outro"}:
+                if pending.kind in {"font", "logo", "intro", "outro", "lut"}:
                     if not event.media:
                         raise ValueError("لطفاً فایل درخواست‌شده را ارسال کنید.")
                     self.pending = None
@@ -224,6 +227,16 @@ class Controller:
         elif pending.kind == "gif":
             await self.start_gif(pending.scope, GifRange.from_text(text))
             return
+        elif pending.kind == "grade":
+            if pending.field not in views.GRADE_FIELDS:
+                raise ValueError("تنظیم رنگ معتبر نیست.")
+            candidate = replace(settings.color_grade, **{pending.field: text})
+            candidate.validate()
+            settings.color_grade = candidate
+            self.save_settings(pending.scope, settings)
+            self.pending = None
+            await self.color_menu(pending.scope)
+            return
         elif pending.kind == "value":
             target, field = pending.field.split(".")
             if target in {"intro", "outro"}:
@@ -257,7 +270,7 @@ class Controller:
                 self.draft = Draft(result.id, str(result.path), result.name, self.store.defaults())
                 self.store.save_draft(self.draft)
             elif pending.scope != "g":
-                self.select_asset(pending.scope, pending.kind, result.id)
+                self.select_asset(pending.scope, pending.kind, result.id, pending.field)
             await self.back(pending.scope)
         except asyncio.CancelledError:
             raise
@@ -274,11 +287,19 @@ class Controller:
                 "دریافت فایل با خطا روبه‌رو شد؛ دوباره تلاش کنید. جزئیات در لاگ سرور است."
             )
 
-    def select_asset(self, scope: str, kind: str, asset_id: str | None) -> None:
+    def select_asset(self, scope: str, kind: str, asset_id: str | None, target: str = "") -> None:
         self.store.asset(asset_id, kind)
         settings = self.settings(scope)
         if kind == "font":
             settings.text_style.font_id = asset_id
+        elif kind == "lut":
+            look = Look(target) if target else Look.CUSTOM
+            if not look.needs_lut:
+                raise ValueError("پروفایل LUT معتبر نیست.")
+            settings.color_grade.look = look if asset_id else Look.NONE
+            settings.color_grade.lut_id = asset_id
+            if asset_id and look.needs_lut:
+                self.store.bind_look(look, asset_id)
         elif scope != "s":
             setattr(self.draft, f"{kind}_id", asset_id)
         else:
@@ -286,24 +307,27 @@ class Controller:
         self.save_settings(scope, settings)
 
     async def asset_menu(self) -> None:
+        items = [
+            views.button(label, f"g:library:{kind}:0") for kind, label in views.KIND_NAMES.items()
+        ]
         await self.say(
             "کتابخانهٔ فایل‌های قابل استفادهٔ مجدد",
-            [
-                [
-                    views.button(label, f"g:library:{kind}:0")
-                    for kind, label in views.KIND_NAMES.items()
-                ],
-                [views.button("بازگشت", "g:home")],
-            ],
+            [items[i : i + 3] for i in range(0, len(items), 3)]
+            + [[views.button("بازگشت", "g:home")]],
         )
 
-    async def library(self, scope: str, kind: str, page: int) -> None:
-        if kind not in views.KIND_NAMES or (scope == "s" and kind != "font"):
+    async def library(self, scope: str, kind: str, page: int, target: str = "") -> None:
+        if kind not in views.KIND_NAMES or (scope == "s" and kind not in {"font", "lut"}):
             raise ValueError("این کتابخانه برای این تنظیم قابل انتخاب نیست.")
+        if target and (kind != "lut" or not Look(target).needs_lut):
+            raise ValueError("پروفایل LUT معتبر نیست.")
         rows = []
+        suffix = f":{target}" if target else ""
         for asset in self.store.assets(kind, page * 8):
             select = (
-                f"{scope}:select:{kind}:{asset.id}" if scope != "g" else f"g:info:{kind}:{asset.id}"
+                f"{scope}:select:{kind}:{asset.id}{suffix}"
+                if scope != "g"
+                else f"g:info:{kind}:{asset.id}"
             )
             rows.append(
                 [
@@ -311,24 +335,26 @@ class Controller:
                     views.button("حذف", f"{scope}:delete:{kind}:{asset.id}"),
                 ]
             )
-        rows.append([views.button("آپلود فایل جدید", f"{scope}:upload:{kind}")])
+        rows.append([views.button("آپلود فایل جدید", f"{scope}:upload:{kind}{suffix}")])
         if scope != "g":
-            rows.append([views.button("حذف انتخاب / فونت سیستم", f"{scope}:select:{kind}:none")])
+            rows.append([views.button("برداشتن انتخاب", f"{scope}:select:{kind}:none{suffix}")])
         navigation = []
         if page:
-            navigation.append(views.button("قبلی", f"{scope}:library:{kind}:{page - 1}"))
+            navigation.append(views.button("قبلی", f"{scope}:library:{kind}:{page - 1}{suffix}"))
         if self.store.assets(kind, (page + 1) * 8):
-            navigation.append(views.button("بعدی", f"{scope}:library:{kind}:{page + 1}"))
+            navigation.append(views.button("بعدی", f"{scope}:library:{kind}:{page + 1}{suffix}"))
         if navigation:
             rows.append(navigation)
         rows.append([views.button("بازگشت", f"{scope}:back")])
-        self.pending = Pending(kind, scope)
+        self.pending = Pending(kind, scope, target)
+        label = f" برای {target.upper()}" if target else ""
         await self.say(
-            f"یک {views.KIND_NAMES[kind]} بفرستید یا از فایل‌های ذخیره‌شده انتخاب کنید.", rows
+            f"یک {views.KIND_NAMES[kind]}{label} بفرستید یا از فایل‌های ذخیره‌شده انتخاب کنید.", rows
         )
 
     def used_assets(self) -> set[str]:
-        used = {self.store.defaults().text_style.font_id}
+        defaults = self.store.defaults()
+        used = {defaults.text_style.font_id, defaults.color_grade.lut_id}
         if self.draft:
             used.update(
                 [
@@ -336,9 +362,17 @@ class Controller:
                     self.draft.intro_id,
                     self.draft.outro_id,
                     self.draft.settings.text_style.font_id,
+                    self.draft.settings.color_grade.lut_id,
                 ]
             )
         return {asset for asset in used if asset}
+
+    async def color_menu(self, scope: str) -> None:
+        grade = self.settings(scope).color_grade
+        await self.say(
+            views.grade_text(grade),
+            views.grade_buttons(scope, grade, set(self.store.get("look_luts", {}))),
+        )
 
     async def on_callback(self, event) -> None:
         if not self.allowed(event):
@@ -383,6 +417,69 @@ class Controller:
             await self.say(
                 views.settings_text(self.draft.settings), views.advanced_buttons(self.draft)
             )
+        elif action == "filters":
+            await self.color_menu(scope)
+        elif action == "references":
+            self.settings(scope)
+            rows = [
+                [
+                    b(
+                        f"انتخاب / تغییر مرجع {look.value.upper()}",
+                        f"{scope}:library:lut:0:{look.value}",
+                    )
+                ]
+                for look in (Look.DNT1, Look.DNT2, Look.DNT3, Look.DNT4, Look.DNT5)
+            ]
+            rows.extend(
+                [
+                    [b("LUT شخصی", f"{scope}:library:lut:0:custom")],
+                    [b("بازگشت", f"{scope}:filters")],
+                ]
+            )
+            await self.say("فایل .cube مرجع همان پروفایل را انتخاب یا آپلود کنید.", rows)
+        elif action == "compare":
+            snapshot = Draft.from_dict(self.draft.to_dict())
+            self.activity.start(
+                "مقایسهٔ فیلترها",
+                lambda: self.jobs.run(snapshot, False, self.show, comparison=True),
+            )
+        elif action == "adjust":
+            await self.say(
+                views.grade_text(self.settings(scope).color_grade), views.adjustment_buttons(scope)
+            )
+        elif action == "look":
+            look = Look(args[1])
+            settings = self.settings(scope)
+            if look.needs_lut:
+                asset_id = self.store.look_lut(look)
+                if asset_id is None or look == Look.CUSTOM:
+                    await self.library(scope, "lut", 0, look.value)
+                    return
+                self.store.asset(asset_id, "lut")
+                settings.color_grade.lut_id = asset_id
+            else:
+                settings.color_grade.lut_id = None
+            settings.color_grade.look = look
+            self.save_settings(scope, settings)
+            await self.color_menu(scope)
+        elif action == "grade_reset":
+            settings = self.settings(scope)
+            settings.color_grade = ColorGrade()
+            self.save_settings(scope, settings)
+            await self.color_menu(scope)
+        elif action == "grade_value":
+            name = args[1]
+            if name not in views.GRADE_FIELDS:
+                raise ValueError("تنظیم رنگ معتبر نیست.")
+            label, choices = views.GRADE_FIELDS[name]
+            buttons = [b(str(value), f"{scope}:grade_set:{name}:{value}") for value in choices]
+            await self.ask(
+                Pending("grade", scope, name),
+                f"{label}: یک مقدار انتخاب کنید یا عدد بفرستید.",
+                [buttons],
+            )
+        elif action == "grade_set":
+            await self.accept_text(Pending("grade", scope, args[1]), args[2])
         elif action == "help":
             await self.say(views.HELP)
         elif action == "assets":
@@ -456,18 +553,25 @@ class Controller:
                 "رندر", lambda: self.jobs.run(snapshot, action == "preview", self.show)
             )
         elif action == "library":
-            await self.library(scope, args[1], max(0, int(args[2])))
+            await self.library(
+                scope, args[1], max(0, int(args[2])), args[3] if len(args) > 3 else ""
+            )
         elif action == "upload":
             kind = args[1]
             if kind not in views.KIND_NAMES:
                 raise ValueError("نوع فایل معتبر نیست.")
             await self.ask(
-                Pending(kind, scope),
+                Pending(kind, scope, args[2] if len(args) > 2 else ""),
                 f"فایل {views.KIND_NAMES[kind]} را بفرستید. "
-                "فونت: TTF/OTF؛ لوگو: PNG/WebP/JPG؛ کلیپ: MP4 و مشابه.",
+                "فونت: TTF/OTF؛ لوگو: PNG/WebP/JPG؛ LUT: .cube؛ کلیپ: MP4 و مشابه.",
             )
         elif action == "select":
-            self.select_asset(scope, args[1], None if args[2] == "none" else args[2])
+            self.select_asset(
+                scope,
+                args[1],
+                None if args[2] == "none" else args[2],
+                args[3] if len(args) > 3 else "",
+            )
             await self.back(scope)
         elif action == "info":
             asset = self.store.asset(args[2], args[1])

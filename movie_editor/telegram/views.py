@@ -2,7 +2,18 @@
 
 from telethon import Button
 
-from ..domain import Color, Delivery, Draft, Position, Quality, Settings, Transition
+from ..domain import (
+    GRADE_LIMITS,
+    Color,
+    ColorGrade,
+    Delivery,
+    Draft,
+    Look,
+    Position,
+    Quality,
+    Settings,
+    Transition,
+)
 
 POSITION_NAMES = {
     Position.TOP_LEFT: "بالا چپ",
@@ -30,7 +41,43 @@ TRANSITION_NAMES = {
     Transition.CIRCLE: "باز شدن دایره",
     Transition.PIXEL: "پیکسلی",
 }
-KIND_NAMES = {"font": "فونت", "logo": "لوگو", "intro": "کلیپ ابتدا", "outro": "کلیپ انتها"}
+KIND_NAMES = {
+    "font": "فونت",
+    "logo": "لوگو",
+    "intro": "کلیپ ابتدا",
+    "outro": "کلیپ انتها",
+    "lut": "LUT رنگی",
+}
+LOOK_NAMES = {
+    Look.NONE: "بدون فیلتر",
+    Look.BW: "B&W",
+    Look.WARM: "گرم",
+    Look.COOL: "سرد",
+    Look.SEPIA: "سپیا",
+    Look.VINTAGE: "وینتیج",
+    Look.CINEMA: "سینمایی",
+    Look.FADE: "مات",
+    Look.VIVID: "رنگ زنده",
+    Look.NOIR: "نوآر",
+    Look.DNT1: "DNT1",
+    Look.DNT2: "DNT2",
+    Look.DNT3: "DNT3",
+    Look.DNT4: "DNT4",
+    Look.DNT5: "DNT5",
+    Look.CUSTOM: "LUT شخصی",
+}
+GRADE_FIELDS = {
+    name: (GRADE_LIMITS[name][2], choices)
+    for name, choices in {
+        "strength": (0, 25, 50, 75, 100),
+        "brightness": (-50, -25, 0, 25, 50),
+        "contrast": (75, 100, 125, 150),
+        "saturation": (0, 50, 100, 150, 200),
+        "gamma": (0.8, 1, 1.2, 1.5),
+        "temperature": (-50, -25, 0, 25, 50),
+        "vignette": (0, 25, 50, 75, 100),
+    }.items()
+}
 
 
 def button(label: str, data: str):
@@ -54,7 +101,7 @@ def draft_buttons(draft: Draft):
     return [
         [b("واترمارک متنی", "text"), b("لوگو", "library:logo:0")],
         [b("کلیپ ابتدا", "library:intro:0"), b("کلیپ انتها", "library:outro:0")],
-        [b("ظاهر متن و فونت", "style:text"), b("استفاده از پیش‌فرض", "defaults")],
+        [b("ظاهر و فونت", "style:text"), b("فیلتر رنگی", "filters"), b("پیش‌فرض", "defaults")],
         [b("پیش‌نمایش", "preview"), b("ساخت خروجی", "render"), b("تبدیل به GIF", "gif")],
         [b("گزینه‌های بیشتر", "advanced"), b("ویدیوی جدید", "discard")],
     ]
@@ -106,6 +153,7 @@ def settings_text(settings: Settings) -> str:
         f"({settings.intro_join.seconds:g}s)\n"
         f"ترنزیشن انتها: {TRANSITION_NAMES[settings.outro_join.kind]} "
         f"({settings.outro_join.seconds:g}s)\n"
+        f"فیلتر: {LOOK_NAMES[settings.color_grade.look]} ({settings.color_grade.strength:g}٪)\n"
         f"خروجی: {QUALITY_NAMES[settings.quality]}، "
         f"{'فایل اصلی' if settings.delivery == Delivery.FILE else 'ویدیوی قابل پخش'}"
     )
@@ -122,6 +170,8 @@ def draft_text(draft: Draft) -> str:
         f"ابتدا: {'دارد' if draft.intro_id else 'ندارد'} | "
         f"انتها: {'دارد' if draft.outro_id else 'ندارد'}\n"
         f"برش: {trim} | صدا: {'خاموش' if draft.mute else 'روشن'}\n\n"
+        + f"فیلتر: {LOOK_NAMES[draft.settings.color_grade.look]} "
+        + f"({draft.settings.color_grade.strength:g}٪)\n"
         + f"کیفیت خروجی: {QUALITY_NAMES[draft.settings.quality]}\n"
         + "گزینه‌ها را انتخاب کنید و «ساخت خروجی» را بزنید."
     )
@@ -132,7 +182,9 @@ HELP = (
     "برای متن، لوگو و کلیپ ابتدا/انتها انتخاب مستقل دارید. "
     "فونت TTF/OTF و لوگوی PNG شفاف قابل آپلود است.\n"
     "داینامیک: متن روی زمینه روشن سیاه و روی زمینه تیره سفید می‌شود.\n"
-    "پیش‌فرض فقط ظاهر، فونت، ترنزیشن، کیفیت و نوع ارسال را ذخیره می‌کند؛ "
+    "«فیلتر رنگی»: B&W و لوک‌های محلی، شدت، اصلاح رنگ و LUT سه‌بعدی .cube.\n"
+    "DNT1 تا DNT5 فقط پس از نصب LUT مرجع فعال می‌شوند؛ افکت حدسی جای آن‌ها نیست.\n"
+    "پیش‌فرض فقط ظاهر، فونت، رنگ، ترنزیشن، کیفیت و نوع ارسال را ذخیره می‌کند؛ "
     "محتوای پروژه را ذخیره نمی‌کند.\n"
     "خروجی پیش‌فرض بدون افت کیفیت، به‌صورت فایل MKV است. حجم آن ممکن است زیاد باشد.\n"
     "برای فایل کوچک‌تر، از گزینه‌های بیشتر MP4 را انتخاب کنید؛ این گزینه با فشرده‌سازی است.\n"
@@ -145,3 +197,54 @@ HELP = (
     "فایل خروجی به‌صورت Document پیش‌فرض است. "
     "برای حفظ فایل اصلی آن را دوباره با فشرده‌سازی ارسال نکنید."
 )
+
+
+def grade_text(grade: ColorGrade) -> str:
+    return (
+        f"فیلتر: {LOOK_NAMES[grade.look]} | شدت: {grade.strength:g}٪\n"
+        f"روشنایی: {grade.brightness:g} | کنتراست: {grade.contrast:g} | "
+        f"اشباع: {grade.saturation:g}\n"
+        f"گاما: {grade.gamma:g} | دمای رنگ: {grade.temperature:g} | "
+        f"تیرگی لبه‌ها: {grade.vignette:g}\n"
+        "DNTها به LUT مرجع نیاز دارند. سایر لوک‌ها پروفایل محلی هستند."
+    )
+
+
+def grade_buttons(scope: str, grade: ColorGrade, installed: set[str]):
+    looks = []
+    for look, name in LOOK_NAMES.items():
+        label = ("✓ " if grade.look == look else "") + name
+        if look.needs_lut and look != Look.CUSTOM and look.value not in installed:
+            label += " • LUT لازم"
+        looks.append(button(label, f"{scope}:look:{look.value}"))
+    rows = [looks[i : i + 3] for i in range(0, len(looks), 3)]
+    rows.extend(
+        [
+            [
+                button("شدت فیلتر", f"{scope}:grade_value:strength"),
+                button("اصلاح رنگ", f"{scope}:adjust"),
+            ],
+            [
+                button("بازنشانی رنگ", f"{scope}:grade_reset"),
+                button("مراجع DNT / LUT", f"{scope}:references"),
+            ],
+        ]
+    )
+    if scope.startswith("d:"):
+        rows.append(
+            [
+                button("پیش‌نمایش ویدیو", f"{scope}:preview"),
+                button("مقایسهٔ فیلترها", f"{scope}:compare"),
+            ]
+        )
+    rows.append([button("بازگشت", f"{scope}:back")])
+    return rows
+
+
+def adjustment_buttons(scope: str):
+    items = [
+        button(label, f"{scope}:grade_value:{name}") for name, (label, _) in GRADE_FIELDS.items()
+    ]
+    return [items[i : i + 2] for i in range(0, len(items), 2)] + [
+        [button("بازگشت به فیلترها", f"{scope}:filters")]
+    ]

@@ -5,7 +5,7 @@ import sqlite3
 from dataclasses import asdict
 from pathlib import Path
 
-from .domain import Asset, Draft, Settings
+from .domain import Asset, Draft, Look, Settings
 
 
 class Store:
@@ -85,6 +85,21 @@ class Store:
     def delete_asset(self, asset_id: str) -> None:
         with self.db:
             self.db.execute("DELETE FROM assets WHERE id=?", (asset_id,))
+        bindings = self.get("look_luts", {})
+        self.set(
+            "look_luts", {look: value for look, value in bindings.items() if value != asset_id}
+        )
+
+    def bind_look(self, look: Look, asset_id: str) -> None:
+        if not look.needs_lut:
+            raise ValueError("این پروفایل به LUT متصل نمی‌شود.")
+        self.asset(asset_id, "lut")
+        bindings = self.get("look_luts", {})
+        bindings[look.value] = asset_id
+        self.set("look_luts", bindings)
+
+    def look_lut(self, look: Look) -> str | None:
+        return self.get("look_luts", {}).get(look.value)
 
     def record(self, name: str, status: str, detail: str) -> None:
         with self.db:

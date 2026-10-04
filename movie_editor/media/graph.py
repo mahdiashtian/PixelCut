@@ -4,7 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..domain import Draft, Join, Quality, Transition
-from .formats import PixelLayout, layout_for
+from .formats import render_layout
+from .grading import grade_graph
 from .graphics import Overlay
 from .probe import MediaInfo
 
@@ -38,7 +39,7 @@ def build_graph(draft: Draft, segments: list[Segment], overlays: list[Overlay]) 
     main_index = 1 if draft.intro_id else 0
     main = segments[main_index]
     lossless = draft.settings.quality == Quality.LOSSLESS
-    layout = layout_for(main.info) if lossless else PixelLayout("yuv444p", "yuv420p", "yuv444")
+    layout = render_layout(main.info, draft.settings.quality, draft.settings.color_grade)
     gx = layout.horizontal_grid if lossless else 2
     gy = layout.vertical_grid if lossless else 2
     width = main.info.width + (-main.info.width % gx)
@@ -125,6 +126,9 @@ def build_graph(draft: Draft, segments: list[Segment], overlays: list[Overlay]) 
         video = new_video
         if audio:
             audio = new_audio
+    if draft.settings.color_grade.active:
+        filters.append(grade_graph(draft.settings.color_grade, video, "graded"))
+        video = "graded"
     for i, overlay in enumerate(overlays):
         input_index = len(segments) + i
         output = f"overlay{i}"

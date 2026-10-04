@@ -11,6 +11,7 @@ from telethon.tl.types import DocumentAttributeVideo
 
 from .config import Config
 from .domain import Delivery, Draft, GifRange, Quality
+from .media.gallery import FilterGallery
 from .media.gif import GifExporter
 from .media.renderer import Renderer
 from .storage import Store
@@ -60,9 +61,11 @@ class JobService:
         store: Store,
         renderer: Renderer,
         gif_exporter: GifExporter | None = None,
+        gallery: FilterGallery | None = None,
     ):
         self.client, self.config, self.store, self.renderer = client, config, store, renderer
         self.gif_exporter = gif_exporter or GifExporter(config)
+        self.gallery = gallery or FilterGallery(config, store)
 
     async def run(
         self,
@@ -71,17 +74,22 @@ class JobService:
         refresh: Callable[[], Awaitable[None]],
         *,
         gif: GifRange | None = None,
+        comparison: bool = False,
     ) -> None:
         # Snapshot prevents a later settings change from mutating a running render.
         draft = Draft.from_dict(draft.to_dict())
-        mode = "gif" if gif is not None else "preview" if preview else "render"
+        if comparison:
+            mode, operation = "compare", "مقایسهٔ فیلترها"
+        elif gif is not None:
+            mode, operation = "gif", "تبدیل به GIF"
+        else:
+            mode, operation = ("preview" if preview else "render"), "رندر"
         folder = self.config.data_dir / "jobs" / draft.id / mode
         status = await self.client.send_message(
             self.config.admin_id,
-            "در حال آماده‌سازی GIF…" if gif is not None else "در حال آماده‌سازی رندر…",
+            f"در حال آماده‌سازی {operation}…",
         )
         last_update = 0.0
-        operation = "تبدیل به GIF" if gif is not None else "رندر"
 
         async def update(message: str, running: bool = True) -> None:
             try:
@@ -104,7 +112,10 @@ class JobService:
                 await update(f"در حال ارسال خروجی: {current / total * 100:.0f}٪")
 
         try:
-            if gif is not None:
+            if comparison:
+                async with asyncio.timeout(self.config.max_render_seconds):
+                    result = await self.gallery.render(draft, folder, render_progress)
+            elif gif is not None:
                 result = await self.gif_exporter.convert(
                     Path(draft.source), gif, folder, render_progress
                 )
@@ -113,7 +124,8 @@ class JobService:
             await update("رندر تمام شد؛ در حال ارسال…")
             thumb = await self.renderer.thumbnail(result.path, folder / "thumb.jpg")
             as_file = (
-                gif is not None
+                comparison
+                or gif is not None
                 or not preview
                 and (
                     draft.settings.delivery == Delivery.FILE
@@ -149,7 +161,7 @@ class JobService:
                 progress_callback=upload_progress,
                 mime_type="image/gif" if gif is not None else None,
             )
-            if not preview:
+            if not preview and not comparison:
                 self.store.record(draft.original_name, "done", result.notice)
             await update(
                 "GIF ارسال شد؛ پروژه برای ویرایش و تبدیل دوباره حفظ شده است."
@@ -185,7 +197,11 @@ class JobService:
                 "text.png",
                 "logo.png",
                 "thumb.jpg",
+                "look.cube",
+                "comparison.png",
             ):
                 (folder / name).unlink(missing_ok=True)
+            for path in folder.glob("sample-*.png"):
+                path.unlink(missing_ok=True)
         # The completion menu must be usable after Activity marks this task done.
         await refresh()

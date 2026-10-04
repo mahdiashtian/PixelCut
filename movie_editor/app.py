@@ -11,6 +11,7 @@ from .assets import AssetService
 from .config import Config
 from .health import check
 from .jobs import JobService
+from .media.gallery import FilterGallery
 from .media.gif import GifExporter
 from .media.renderer import Renderer
 from .storage import Store
@@ -28,7 +29,9 @@ async def run(config: Config) -> None:
         config,
         store,
         AssetService(config, store),
-        JobService(client, config, store, renderer, GifExporter(config)),
+        JobService(
+            client, config, store, renderer, GifExporter(config), FilterGallery(config, store)
+        ),
     )
     controller.register()
     try:

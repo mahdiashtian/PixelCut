@@ -9,5 +9,5 @@ from .probe import MediaInfo
 @dataclass(frozen=True)
 class RenderResult:
     path: Path
-    info: MediaInfo
+    info: MediaInfo | None
     notice: str

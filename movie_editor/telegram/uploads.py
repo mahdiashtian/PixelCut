@@ -31,7 +31,12 @@ class UploadService:
         if not file:
             raise ValueError("فایل قابل دریافت نیست.")
         name = file.name or ("logo.jpg" if event.photo else "video.mp4")
-        max_mb = self.config.max_font_mb if kind in {"font", "logo"} else self.config.max_upload_mb
+        limits = {
+            "font": self.config.max_font_mb,
+            "logo": self.config.max_font_mb,
+            "lut": self.config.max_lut_mb,
+        }
+        max_mb = limits.get(kind, self.config.max_upload_mb)
         if (file.size or 0) > max_mb * 1024**2:
             raise ValueError(f"حجم فایل از {max_mb} مگابایت بیشتر است.")
         if shutil.disk_usage(self.config.data_dir).free < (

@@ -25,6 +25,7 @@ class Config:
     max_pixels: int = 33177600
     min_free_disk_mb: int = 2048
     threads: int = 4
+    max_lut_mb: int = 20
 
     @classmethod
     def from_env(cls, require_telegram: bool = True) -> "Config":
@@ -66,6 +67,7 @@ class Config:
             max_pixels=positive("MAX_PIXELS", 33177600),
             min_free_disk_mb=positive("MIN_FREE_DISK_MB", 2048),
             threads=positive("FFMPEG_THREADS", 4),
+            max_lut_mb=positive("MAX_LUT_MB", 20),
         )
 
     def prepare(self) -> None:

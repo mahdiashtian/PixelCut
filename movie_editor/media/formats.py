@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 
+from ..domain import ColorGrade, Quality
 from .probe import MediaInfo
 
 
@@ -32,3 +33,10 @@ def layout_for(info: MediaInfo) -> PixelLayout:
             "برای جلوگیری از تبدیل ناخواسته، خروجی ساخته نشد."
         )
     return layouts[info.pixel_format]
+
+
+def render_layout(info: MediaInfo, quality: Quality, grade: ColorGrade) -> PixelLayout:
+    native = layout_for(info) if quality == Quality.LOSSLESS else None
+    if grade.active:
+        return PixelLayout("bgr0", "bgr0", "rgb")
+    return native or PixelLayout("yuv444p", "yuv420p", "yuv444", 2, 2)

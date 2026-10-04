@@ -6,7 +6,8 @@ from pathlib import Path
 from ..config import Config
 from ..domain import Draft, Quality
 from ..storage import Store
-from .formats import PixelLayout, layout_for
+from .formats import layout_for, render_layout
+from .grading import stage_lut
 from .graph import Segment, build_graph
 from .graphics import find_font, logo_overlay, text_overlay
 from .limits import check_output, check_space, guarded_progress
@@ -27,14 +28,15 @@ class Renderer:
             draft = Draft.from_dict(draft.to_dict())
             draft.settings.quality = Quality.FAST
         draft.validate()
+        folder = folder.resolve()
         folder.mkdir(parents=True, exist_ok=True)
         check_space(self.config, folder)
         paths: list[Path] = []
         if draft.intro_id:
-            paths.append(Path(self.store.asset(draft.intro_id, "intro").path))
-        paths.append(Path(draft.source))
+            paths.append(Path(self.store.asset(draft.intro_id, "intro").path).resolve())
+        paths.append(Path(draft.source).resolve())
         if draft.outro_id:
-            paths.append(Path(self.store.asset(draft.outro_id, "outro").path))
+            paths.append(Path(self.store.asset(draft.outro_id, "outro").path).resolve())
         infos = [await inspect(path, self.config) for path in paths]
         main_index = 1 if draft.intro_id else 0
         main = infos[main_index]
@@ -63,16 +65,18 @@ class Renderer:
                 for i, s in enumerate(segments)
             ]
         lossless = draft.settings.quality == Quality.LOSSLESS
-        layout = layout_for(main) if lossless else PixelLayout("yuv444p", "yuv420p", "yuv444", 2, 2)
+        layout = render_layout(main, draft.settings.quality, draft.settings.color_grade)
         if lossless:
             for info in infos:
-                if layout_for(info).encoded != layout.encoded:
+                if layout_for(info).encoded != layout_for(main).encoded:
                     raise ValueError(
                         "برای اتصال بدون افت، فرمت رنگ کلیپ‌ها باید یکسان باشد؛ "
                         "کلیپ ابتدا/انتهای سازگار انتخاب کنید."
                     )
-        width = main.width + (-main.width % layout.horizontal_grid)
-        height = main.height + (-main.height % layout.vertical_grid)
+        grid_x = layout.horizontal_grid if lossless else 2
+        grid_y = layout.vertical_grid if lossless else 2
+        width = main.width + (-main.width % grid_x)
+        height = main.height + (-main.height % grid_y)
         overlays = []
         if draft.text:
             font_asset = self.store.asset(draft.settings.text_style.font_id, "font")
@@ -101,6 +105,7 @@ class Renderer:
                 )
             )
         graph = build_graph(draft, segments, overlays)
+        stage_lut(draft.settings.color_grade, self.store, folder)
         if graph.duration > self.config.max_video_seconds:
             raise ValueError("مدت خروجی از محدودیت تنظیم‌شده بیشتر می‌شود.")
         output = folder / ("edited.mkv" if lossless else "edited.mp4")
@@ -172,10 +177,16 @@ class Renderer:
             ]
         )
         for flag, value in (
-            ("-colorspace", main.color_space),
+            (
+                "-colorspace",
+                "rgb" if lossless and graph.pixel_format == "bgr0" else main.color_space,
+            ),
             ("-color_trc", main.color_transfer),
             ("-color_primaries", main.color_primaries),
-            ("-color_range", main.color_range),
+            (
+                "-color_range",
+                "pc" if lossless and graph.pixel_format == "bgr0" else main.color_range,
+            ),
         ):
             if flag == "-colorspace" and value == "gbr":
                 value = "rgb"
@@ -189,6 +200,7 @@ class Renderer:
             graph.duration,
             self.config.max_render_seconds,
             guarded_progress(self.config, output, progress),
+            cwd=folder,
         )
         result = await inspect(output, self.config)
         check_output(self.config, output)
