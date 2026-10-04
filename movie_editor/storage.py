@@ -1,0 +1,103 @@
+"""Small SQLite repository for defaults, the active draft and the asset library."""
+
+import json
+import sqlite3
+from dataclasses import asdict
+from pathlib import Path
+
+from .domain import Asset, Draft, Settings
+
+
+class Store:
+    def __init__(self, path: Path):
+        self.db = sqlite3.connect(path)
+        self.db.row_factory = sqlite3.Row
+        self.db.executescript("""
+            PRAGMA journal_mode=WAL;
+            CREATE TABLE IF NOT EXISTS preferences (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS assets (
+                id TEXT PRIMARY KEY, kind TEXT NOT NULL, name TEXT NOT NULL, path TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS history (
+                id INTEGER PRIMARY KEY, created TEXT DEFAULT CURRENT_TIMESTAMP,
+                name TEXT NOT NULL, status TEXT NOT NULL, detail TEXT NOT NULL
+            );
+        """)
+
+    def close(self) -> None:
+        self.db.close()
+
+    def get(self, key: str, fallback=None):
+        row = self.db.execute("SELECT value FROM preferences WHERE key=?", (key,)).fetchone()
+        return json.loads(row[0]) if row else fallback
+
+    def set(self, key: str, value) -> None:
+        with self.db:
+            self.db.execute(
+                "INSERT OR REPLACE INTO preferences VALUES (?, ?)",
+                (key, json.dumps(value, ensure_ascii=False)),
+            )
+
+    def defaults(self) -> Settings:
+        data = self.get("defaults")
+        return Settings.from_dict(data) if data else Settings()
+
+    def save_defaults(self, settings: Settings) -> None:
+        settings.validate()
+        self.set("defaults", asdict(settings))
+
+    def draft(self) -> Draft | None:
+        data = self.get("draft")
+        return Draft.from_dict(data) if data else None
+
+    def save_draft(self, draft: Draft | None) -> None:
+        if draft:
+            draft.validate()
+        self.set("draft", draft.to_dict() if draft else None)
+
+    def add_asset(self, asset: Asset) -> None:
+        with self.db:
+            self.db.execute(
+                "INSERT INTO assets VALUES (?, ?, ?, ?)",
+                (asset.id, asset.kind, asset.name, asset.path),
+            )
+
+    def asset(self, asset_id: str | None, kind: str) -> Asset | None:
+        if not asset_id:
+            return None
+        row = self.db.execute(
+            "SELECT * FROM assets WHERE id=? AND kind=?", (asset_id, kind)
+        ).fetchone()
+        if row is None:
+            raise ValueError("فایل انتخاب‌شده در کتابخانه موجود نیست.")
+        asset = Asset(**dict(row))
+        if not Path(asset.path).is_file():
+            raise ValueError("فایل کتابخانه از روی دیسک حذف شده است؛ دوباره آپلود کنید.")
+        return asset
+
+    def assets(self, kind: str, offset: int = 0) -> list[Asset]:
+        rows = self.db.execute(
+            "SELECT * FROM assets WHERE kind=? ORDER BY rowid DESC LIMIT 8 OFFSET ?",
+            (kind, max(0, offset)),
+        ).fetchall()
+        return [Asset(**dict(row)) for row in rows]
+
+    def delete_asset(self, asset_id: str) -> None:
+        with self.db:
+            self.db.execute("DELETE FROM assets WHERE id=?", (asset_id,))
+
+    def record(self, name: str, status: str, detail: str) -> None:
+        with self.db:
+            self.db.execute(
+                "INSERT INTO history (name, status, detail) VALUES (?, ?, ?)",
+                (name[:200], status, detail[:1000]),
+            )
+            self.db.execute(
+                "DELETE FROM history WHERE id NOT IN "
+                "(SELECT id FROM history ORDER BY id DESC LIMIT 100)"
+            )
+
+    def history(self) -> list[dict]:
+        return [
+            dict(row) for row in self.db.execute("SELECT * FROM history ORDER BY id DESC LIMIT 10")
+        ]

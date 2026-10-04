@@ -1,0 +1,16 @@
+services:
+  editor:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATA_DIR: /app/data
+      FFMPEG_BIN: ffmpeg
+      FFPROBE_BIN: ffprobe
+      DEFAULT_FONT_PATH: /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
+    volumes:
+      - editor-data:/app/data
+    stop_grace_period: 15s
+volumes:
+  editor-data:
+
