@@ -72,6 +72,13 @@ class Renderer:
             ]
         lossless = draft.settings.quality == Quality.LOSSLESS
         layout = layout_for(main) if lossless else PixelLayout("yuv444p", "yuv420p", "yuv444", 2, 2)
+        if lossless:
+            for info in infos:
+                if layout_for(info).encoded != layout.encoded:
+                    raise ValueError(
+                        "برای اتصال بدون افت، فرمت رنگ کلیپ‌ها باید یکسان باشد؛ "
+                        "کلیپ ابتدا/انتهای سازگار انتخاب کنید."
+                    )
         width = main.width + (-main.width % layout.horizontal_grid)
         height = main.height + (-main.height % layout.vertical_grid)
         overlays = []

@@ -1,6 +1,6 @@
 import pytest
 
-from movie_editor.domain import Color, Draft, Quality
+from movie_editor.domain import Asset, Color, Draft, Quality
 from movie_editor.media.graphics import find_font, text_overlay
 from movie_editor.media.process import capture
 from movie_editor.media.renderer import Renderer
@@ -60,6 +60,36 @@ async def test_lossless_no_edit_has_identical_decoded_pixels(config, store, tmp_
     assert await decoded(config, source, pixel_format) == await decoded(
         config, result.path, pixel_format
     )
+
+
+@pytest.mark.parametrize("pixel_format", ["yuv420p16le", "yuv422p"])
+async def test_lossless_rejects_intro_that_would_lose_color_data(
+    config, store, tmp_path, pixel_format
+):
+    source = await clip(config, tmp_path / "source.mp4", fps="30", duration=0.5)
+    intro = tmp_path / "intro.mkv"
+    await capture(
+        [
+            config.ffmpeg,
+            "-v",
+            "error",
+            "-y",
+            "-i",
+            str(source),
+            "-c:v",
+            "ffv1",
+            "-pix_fmt",
+            pixel_format,
+            "-an",
+            str(intro),
+        ]
+    )
+    store.add_asset(Asset("intro", "intro", "intro.mkv", str(intro)))
+    draft = Draft("native", str(source), "source.mp4", intro_id="intro")
+    folder = tmp_path / "render"
+    with pytest.raises(ValueError, match="فرمت رنگ"):
+        await Renderer(config, store).render(draft, folder)
+    assert not (folder / "edited.mkv").exists()
 
 
 @pytest.mark.parametrize("color", [Color.WHITE, Color.BLACK, Color.DYNAMIC])
