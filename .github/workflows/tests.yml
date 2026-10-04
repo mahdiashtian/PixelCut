@@ -32,4 +32,3 @@ jobs:
         run: python -m ruff check .
       - name: Run tests including real media renders
         run: python -m pytest -q
-

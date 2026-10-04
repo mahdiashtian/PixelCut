@@ -91,6 +91,12 @@ async def audio_hash(config, path):
     )
 
 
+async def pcm(config, path):
+    return await capture(
+        [config.ffmpeg, "-v", "error", "-i", str(path), "-map", "0:a:0", "-f", "f32le", "-"]
+    )
+
+
 @pytest.mark.parametrize("vfr", [False, True])
 @pytest.mark.parametrize("quality", [Quality.HIGH, Quality.LOSSLESS])
 async def test_watermark_preserves_each_frame_timestamp_and_audio(
@@ -106,7 +112,10 @@ async def test_watermark_preserves_each_frame_timestamp_and_audio(
     tolerance = 0.000501 if quality == Quality.LOSSLESS else 0.000003
     assert after == pytest.approx(before, abs=tolerance)
     assert (result.info.width, result.info.height) == (320, 180)
-    assert await audio_hash(config, source) == await audio_hash(config, result.path)
+    if quality == Quality.HIGH:
+        assert await audio_hash(config, source) == await audio_hash(config, result.path)
+    else:
+        assert await pcm(config, source) == await pcm(config, result.path)
 
 
 async def test_dynamic_text_changes_on_light_and_dark_frames(config, store, tmp_path):
@@ -200,7 +209,7 @@ async def test_every_transition_with_intro_outro_and_missing_audio(
     draft.logo_id = "logo"
     result = await Renderer(config, store).render(draft, tmp_path / "render")
     assert result.info.duration == pytest.approx(6 if transition == Transition.CUT else 5, abs=0.1)
-    assert result.info.audio_codec == ("flac" if quality == Quality.LOSSLESS else "aac")
+    assert result.info.audio_codec == ("pcm_f32le" if quality == Quality.LOSSLESS else "aac")
     if transition == Transition.CUT:
         assert len(await timestamps(config, result.path)) == 48 + 60 + 30
     else:

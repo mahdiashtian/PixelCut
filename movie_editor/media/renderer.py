@@ -122,7 +122,10 @@ class Renderer:
         for overlay in overlays:
             args.extend(["-i", str(overlay.path)])
         args.extend(["-filter_complex", graph.filters, "-map", f"[{graph.video}]"])
-        copy_audio = graph.copy_audio and (lossless or main.audio_codec in {"aac", "mp3", "alac"})
+        native_audio = main.audio_codec == "flac" or (main.audio_codec or "").startswith("pcm_")
+        copy_audio = graph.copy_audio and (
+            native_audio if lossless else main.audio_codec in {"aac", "mp3", "alac"}
+        )
         if graph.audio:
             args.extend(["-map", f"[{graph.audio}]"])
         elif graph.copy_audio:
@@ -132,7 +135,9 @@ class Renderer:
         elif copy_audio:
             args.extend(["-c:a", "copy"])
         else:
-            args.extend(["-c:a", "flac" if lossless else "aac"])
+            # AAC priming metadata is not preserved by every Matroska muxer version.
+            # Float PCM preserves the decoder's samples without shifting video timestamps.
+            args.extend(["-c:a", "pcm_f32le" if lossless else "aac"])
             if not lossless:
                 args.extend(["-b:a", "192k"])
         if lossless:

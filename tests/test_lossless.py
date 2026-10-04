@@ -5,7 +5,7 @@ from movie_editor.media.graphics import find_font, text_overlay
 from movie_editor.media.process import capture
 from movie_editor.media.renderer import Renderer
 
-from .test_media import audio_hash, clip
+from .test_media import clip, pcm
 
 pytestmark = pytest.mark.integration
 
@@ -29,12 +29,6 @@ async def decoded(config, path, pixel_format):
             "rawvideo",
             "-",
         ]
-    )
-
-
-async def pcm(config, path):
-    return await capture(
-        [config.ffmpeg, "-v", "error", "-i", str(path), "-map", "0:a:0", "-f", "s16le", "-"]
     )
 
 
@@ -75,7 +69,6 @@ async def test_lossless_watermark_only_changes_its_region(config, store, tmp_pat
     draft.settings.text_style.color = color
     result = await Renderer(config, store).render(draft, tmp_path / "render")
     assert result.info.pixel_format == "yuv420p"
-    assert await audio_hash(config, source) == await audio_hash(config, result.path)
     assert await pcm(config, source) == await pcm(config, result.path)
     before = await decoded(config, source, "yuv420p")
     after = await decoded(config, result.path, "yuv420p")

@@ -9,4 +9,3 @@ COPY movie_editor ./movie_editor
 RUN pip install --no-cache-dir . && mkdir data && chown -R editor:editor /app
 USER editor
 CMD ["python", "-m", "movie_editor"]
-
