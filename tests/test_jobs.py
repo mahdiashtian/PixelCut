@@ -29,7 +29,7 @@ async def test_default_delivery_is_document_and_temporary_output_is_cleaned(conf
     refresh.assert_awaited_once()
 
 
-async def test_delivery_failure_keeps_draft_and_cleans_output(config, store):
+async def test_delivery_failure_keeps_validated_output_for_retry(config, store):
     draft = Draft("job", "source.mp4", "source.mp4")
     store.save_draft(draft)
     folder = config.data_dir / "jobs" / draft.id / "render"
@@ -48,7 +48,8 @@ async def test_delivery_failure_keeps_draft_and_cleans_output(config, store):
     await JobService(client, config, store, renderer).run(draft, False, AsyncMock())
     assert store.draft().id == "job"
     assert store.history()[0]["status"] == "failed"
-    assert not output.exists()
+    assert output.exists()
+    assert (folder / "pending.json").exists()
 
 
 @pytest.mark.parametrize("preview", [False, True])

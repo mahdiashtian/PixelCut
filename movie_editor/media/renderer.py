@@ -150,9 +150,23 @@ class Renderer:
         else:
             args.extend(["-c:a", audio_plan.codec])
         if lossless:
-            args.extend(
-                ["-c:v", "ffv1", "-level", "3", "-pix_fmt", graph.pixel_format, "-slicecrc", "1"]
-            )
+            if graph.pixel_format == "bgr0":
+                args.extend(["-c:v", "ffv1", "-level", "3", "-pix_fmt", "bgr0", "-slicecrc", "1"])
+            else:
+                # Inter-frame lossless H.264 is usually smaller than intra-only FFV1.
+                # CRF 0 preserves the native YUV samples; no FPS or chroma reduction.
+                args.extend(
+                    [
+                        "-c:v",
+                        "libx264",
+                        "-crf",
+                        "0",
+                        "-preset",
+                        "slow",
+                        "-pix_fmt",
+                        graph.pixel_format,
+                    ]
+                )
         else:
             args.extend(
                 [
@@ -204,11 +218,11 @@ class Renderer:
             folder / "ffmpeg.log",
             graph.duration,
             self.config.max_render_seconds,
-            guarded_progress(self.config, output, progress),
+            guarded_progress(self.config, output, progress, multipart=True),
             cwd=folder,
         )
         result = await inspect(output, self.config)
-        check_output(self.config, output)
+        check_output(self.config, output, multipart=True)
         if (result.width, result.height) != (width, height):
             raise ValueError("ابعاد خروجی با ابعاد مورد انتظار تطابق ندارد.")
         if abs(result.duration - graph.duration) > max(0.25, 3 / float(main.fps)):
@@ -239,6 +253,12 @@ class Renderer:
             notice += " صدا بدون فشرده‌سازی با اتلاف ذخیره شد."
         if audio_plan.matroska and not lossless:
             notice += " برای حفظ صدا، ویدیوی H.264 در فایل MKV قرار گرفت."
+        if lossless:
+            notice += (
+                " تصویر با FFV1 بدون اتلاف ذخیره شد."
+                if graph.pixel_format == "bgr0"
+                else " تصویر با H.264 lossless (CRF 0) بدون اتلاف ذخیره شد."
+            )
         return RenderResult(output, result, notice)
 
     async def thumbnail(self, video: Path, dst: Path) -> Path:

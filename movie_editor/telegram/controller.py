@@ -75,7 +75,8 @@ class Controller:
 
     async def show(self) -> None:
         if self.draft:
-            await self.say(views.draft_text(self.draft), views.draft_buttons(self.draft))
+            pending = bool(self.jobs and self.jobs.pending(self.draft))
+            await self.say(views.draft_text(self.draft), views.draft_buttons(self.draft, pending))
         else:
             await self.say("سلام. ویدیوی اصلی را بفرستید تا ویرایش شروع شود.", views.home())
 
@@ -267,6 +268,7 @@ class Controller:
                 self.settings(pending.scope)
             result = await self.uploads.receive(event, pending.kind)
             if isinstance(result, SourceVideo):
+                self.discard()
                 self.draft = Draft(result.id, str(result.path), result.name, self.store.defaults())
                 self.store.save_draft(self.draft)
             elif pending.scope != "g":
@@ -547,8 +549,29 @@ class Controller:
         elif action == "discard":
             self.discard()
             await self.show()
-        elif action in {"render", "preview"}:
+        elif action == "compact":
+            await self.say(
+                "خروجی فشرده: تصویر H.264 با کیفیت بالا و حجم کمتر ساخته می‌شود. "
+                "این حالت تصویر را با اتلاف فشرده می‌کند؛ کیفیت آن دقیقاً برابر خروجی lossless نیست. "
+                "ابعاد و زمان‌بندی فریم‌ها حفظ و صدا بدون فشرده‌سازی با اتلاف دوباره نگه‌داری می‌شود. "
+                "در برش/اتصال، برای حفظ صدا خروجی MKV است.",
+                [
+                    [b("ساخت خروجی فشرده", f"{scope}:compact_render")],
+                    [b("بازگشت", f"{scope}:back")],
+                ],
+            )
+        elif action == "resend":
+            if not self.jobs.pending(self.draft):
+                raise ValueError("خروجی آماده‌ای برای ارسال دوباره وجود ندارد؛ خروجی جدید بسازید.")
             snapshot = Draft.from_dict(self.draft.to_dict())
+            self.activity.start(
+                "ارسال دوباره", lambda: self.jobs.run(snapshot, False, self.show, retry=True)
+            )
+        elif action in {"render", "preview", "compact_render"}:
+            snapshot = Draft.from_dict(self.draft.to_dict())
+            if action == "compact_render":
+                snapshot.settings.quality = Quality.HIGH
+                snapshot.settings.delivery = Delivery.FILE
             self.activity.start(
                 "رندر", lambda: self.jobs.run(snapshot, action == "preview", self.show)
             )

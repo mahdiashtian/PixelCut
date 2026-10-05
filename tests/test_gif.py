@@ -39,7 +39,7 @@ def test_gif_range_supports_whole_clip_and_fractional_seconds():
 def test_gif_is_accessible_from_the_simple_menu():
     draft = Draft("current", "source.mp4", "source.mp4")
     rows = draft_buttons(draft)
-    assert len(rows) == 5
+    assert len(rows) == 6
     assert any(b.type.data == b"d:current:gif" for row in rows for b in row)
     assert [b.type.data for b in gif_buttons(draft)[0]] == [
         b"d:current:gif_all",

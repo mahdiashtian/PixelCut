@@ -19,7 +19,7 @@ def test_default_is_lossless_and_cut_preserves_fps():
     assert draft.settings.quality == Quality.LOSSLESS
     assert draft.settings.intro_join.kind == Transition.CUT
     assert draft.settings.outro_join.kind == Transition.CUT
-    assert len(draft_buttons(draft)) == 5
+    assert len(draft_buttons(draft)) == 6
     assert advanced_buttons(draft)
     assert number("۵٫۵٪", 1, 95, "value") == 5.5
 
@@ -47,3 +47,17 @@ async def test_cancel_and_stale_stop_do_not_delete_project(config, store):
     )
     await bot.on_callback(event)
     assert bot.draft.id == "active"
+
+
+async def test_compact_export_requires_explicit_choice_and_does_not_change_defaults(config, store):
+    bot, client = controller(config, store)
+    bot.jobs = SimpleNamespace(run=AsyncMock())
+    await bot.action("d:active", ["compact"])
+    assert "با اتلاف" in client.send_message.call_args.args[1]
+    bot.jobs.run.assert_not_awaited()
+    await bot.action("d:active", ["compact_render"])
+    await bot.activity.task
+    rendered = bot.jobs.run.call_args.args[0]
+    assert rendered.settings.quality == Quality.HIGH
+    assert bot.draft.settings.quality == Quality.LOSSLESS
+    assert store.defaults().quality == Quality.LOSSLESS
