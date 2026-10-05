@@ -2,6 +2,8 @@
 
 import asyncio
 from array import array
+from dataclasses import replace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -481,3 +483,25 @@ async def test_runtime_audio_guard_rejects_a_cut_missing_or_changed_sound(config
     plan = encoding(before, filtered=False, lossless=True, muted=False)
     with pytest.raises(ValueError, match="مفقود"):
         validate_output(await inspect(silent, config), before, plan, 1, None)
+
+
+@pytest.mark.parametrize("extra,allowed", [(256 / 48000, True), (0.05, False)])
+async def test_old_decoder_codec_padding_does_not_mask_a_real_audio_tail(
+    config,
+    tmp_path,
+    monkeypatch,
+    extra,
+    allowed,
+):
+    from movie_editor.media import audio as audio_module
+    from movie_editor.media.audio import AudioTimeline, validate_join_span
+
+    source = await sound_clip(config, tmp_path / "aac.mp4", codec="aac", rate=48000, duration=2)
+    info = replace(await inspect(source, config), audio_duration=2, audio_start=0)
+    decoded = AudioTimeline(round((2 + extra) * 48000), 0, 2 + extra, (), 1024)
+    monkeypatch.setattr(audio_module, "timeline", AsyncMock(return_value=decoded))
+    if allowed:
+        await validate_join_span(source, info, config)
+    else:
+        with pytest.raises(ValueError, match="قطع صدا"):
+            await validate_join_span(source, info, config)

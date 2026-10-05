@@ -165,6 +165,7 @@ class AudioTimeline:
     start: float
     end: float
     gaps: tuple[tuple[float, float], ...]
+    last_samples: int = 0
 
 
 async def timeline(path: Path, config: Config, rate: int) -> AudioTimeline:
@@ -182,7 +183,7 @@ async def timeline(path: Path, config: Config, rate: int) -> AudioTimeline:
         "compact=p=0:nk=0",
         str(path),
     ]
-    count, first, end, gaps = 0, None, 0.0, []
+    count, first, end, gaps, last = 0, None, 0.0, [], 0
     with tempfile.TemporaryFile() as errors:
         process = await asyncio.create_subprocess_exec(
             *command(args), stdout=asyncio.subprocess.PIPE, stderr=errors
@@ -208,13 +209,14 @@ async def timeline(path: Path, config: Config, rate: int) -> AudioTimeline:
                         gaps.append((end, pts - end))
                     end = pts + size / rate
                     count += size
+                    last = size
                 await process.wait()
             if process.returncode or first is None:
                 raise ValueError("بررسی زمان‌بندی صدای خروجی موفق نبود؛ خروجی ارسال نشد.")
         except BaseException:
             await stop(process)
             raise
-    return AudioTimeline(count, first, end, tuple(gaps))
+    return AudioTimeline(count, first, end, tuple(gaps), last)
 
 
 async def verify_samples(
@@ -280,10 +282,17 @@ async def validate_join_span(path: Path, info: MediaInfo, config: Config) -> Non
     if not info.audio_codec:
         return
     sound = await timeline(path, config, info.audio_rate)
-    if (
-        sound.start < info.video_start - 0.00201
-        or sound.end > info.video_start + info.duration + 0.00201
-    ):
+    end = sound.end
+    if info.audio_codec in {"aac", "mp3", "opus", "vorbis", "ac3", "eac3", "dts"}:
+        # Older decoders expose a whole final codec frame even when the container
+        # marks part of it as padding. Honor its declared playable end, but only
+        # within that final frame: a real voice tail must still block the join.
+        declared_end = (
+            info.audio_start + info.audio_duration if info.audio_duration is not None else end
+        )
+        if 0 <= end - declared_end <= sound.last_samples / info.audio_rate + 0.00201:
+            end = declared_end
+    if sound.start < info.video_start - 0.00201 or end > info.video_start + info.duration + 0.00201:
         raise ValueError(
             "صدای یک کلیپ از بازهٔ تصویر آن بیرون است؛ برای جلوگیری از قطع صدا، اتصال انجام نشد. "
             "کلیپی با بازهٔ تصویر و صدای هماهنگ انتخاب کنید یا برش زمانی را صریح مشخص کنید."
