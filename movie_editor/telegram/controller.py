@@ -664,7 +664,8 @@ class Controller:
         elif action == "quality":
             await self.say(
                 "خروجی بدون افت کیفیت پیش‌فرض است و حجم بیشتری دارد. "
-                "گزینه‌های MP4 کوچک‌ترند و فشرده‌سازی با افت دارند.",
+                "گزینه‌های حجم کمتر و رندر سریع، تصویر را با افت فشرده می‌کنند. "
+                "برای حفظ صدا، خروجی برش و اتصال فایل MKV است.",
                 [
                     [b(label, f"{scope}:set_quality:{key.value}")]
                     for key, label in views.QUALITY_NAMES.items()

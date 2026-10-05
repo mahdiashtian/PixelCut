@@ -209,7 +209,8 @@ async def test_every_transition_with_intro_outro_and_missing_audio(
     draft.logo_id = "logo"
     result = await Renderer(config, store).render(draft, tmp_path / "render")
     assert result.info.duration == pytest.approx(6 if transition == Transition.CUT else 5, abs=0.1)
-    assert result.info.audio_codec == ("pcm_f32le" if quality == Quality.LOSSLESS else "aac")
+    assert result.info.audio_codec == "pcm_f64le"
+    assert result.path.suffix == ".mkv"
     if transition == Transition.CUT:
         assert len(await timestamps(config, result.path)) == 48 + 60 + 30
     else:

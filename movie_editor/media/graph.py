@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..domain import Draft, Join, Quality, Transition
+from .audio import AudioLayout, common_layout, segment_audio
 from .formats import render_layout
 from .grading import grade_graph
 from .graphics import Overlay
@@ -33,6 +34,8 @@ class Graph:
     width: int
     height: int
     pixel_format: str
+    audio_layout: AudioLayout | None
+    audio_samples: int | None
 
 
 def build_graph(draft: Draft, segments: list[Segment], overlays: list[Overlay]) -> Graph:
@@ -60,9 +63,12 @@ def build_graph(draft: Draft, segments: list[Segment], overlays: list[Overlay]) 
         and draft.trim_end is None
         and main.duration == main.info.duration
         and main.info.audio_codec is not None
-        and abs(main.info.audio_start - main.info.video_start) < 0.001
     )
     filtered_audio = not draft.mute and not copy_audio and any(s.info.audio_codec for s in segments)
+    audio_layout = (
+        common_layout([s.info for s in segments], strict=lossless) if filtered_audio else None
+    )
+    audio_samples = round(segments[0].duration * audio_layout.rate) if audio_layout else None
     for i, segment in enumerate(segments):
         trim = f"trim=start={segment.start:.9f}:duration={segment.duration:.9f},"
         chain = f"[{i}:{segment.info.video_index}]{trim}setpts=PTS-STARTPTS"
@@ -81,22 +87,9 @@ def build_graph(draft: Draft, segments: list[Segment], overlays: list[Overlay]) 
         chain += f",format={layout.working}[v{i}]"
         filters.append(chain)
         if filtered_audio:
-            if segment.info.audio_codec:
-                # Align the audio start against the corresponding video timeline before trim.
-                delta = segment.info.audio_start - segment.info.video_start
-                audio = (
-                    f"[{i}:{segment.info.audio_index}]asetpts=PTS-STARTPTS+{delta:.9f}/TB,"
-                    "aresample=48000:async=1:first_pts=0,"
-                    "aformat=sample_fmts=fltp:channel_layouts=stereo,"
-                    f"apad,atrim=start={segment.start:.9f}:duration={segment.duration:.9f},"
-                    f"asetpts=PTS-STARTPTS[a{i}]"
-                )
-            else:
-                audio = (
-                    "anullsrc=r=48000:cl=stereo,"
-                    f"atrim=duration={segment.duration:.9f},asetpts=PTS-STARTPTS[a{i}]"
-                )
-            filters.append(audio)
+            filters.append(
+                segment_audio(i, segment.info, segment.start, segment.duration, audio_layout)
+            )
     video, audio = "v0", "a0" if filtered_audio else None
     for i, join in enumerate(joins, start=1):
         new_video, new_audio = f"joinv{i}", f"joina{i}"
@@ -106,6 +99,8 @@ def build_graph(draft: Draft, segments: list[Segment], overlays: list[Overlay]) 
             if audio:
                 filters.append(f"[{audio}][a{i}]concat=n=2:v=0:a=1[{new_audio}]")
             total += segments[i].duration
+            if audio_layout:
+                audio_samples += round(segments[i].duration * audio_layout.rate)
         else:
             # The main clip may have two overlapping transitions: each uses < half a segment.
             duration = min(join.seconds, segments[i - 1].duration / 2, segments[i].duration / 2)
@@ -120,9 +115,14 @@ def build_graph(draft: Draft, segments: list[Segment], overlays: list[Overlay]) 
             )
             if audio:
                 filters.append(
-                    f"[{audio}][a{i}]acrossfade=d={duration:.9f}:c1=tri:c2=tri[{new_audio}]"
+                    f"[{audio}][a{i}]acrossfade=ns={round(duration * audio_layout.rate)}:"
+                    f"c1=tri:c2=tri[{new_audio}]"
                 )
             total += segments[i].duration - duration
+            if audio_layout:
+                audio_samples += round(segments[i].duration * audio_layout.rate) - round(
+                    duration * audio_layout.rate
+                )
         video = new_video
         if audio:
             audio = new_audio
@@ -164,4 +164,6 @@ def build_graph(draft: Draft, segments: list[Segment], overlays: list[Overlay]) 
         width,
         height,
         layout.encoded,
+        audio_layout,
+        audio_samples,
     )

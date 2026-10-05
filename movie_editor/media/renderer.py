@@ -6,6 +6,7 @@ from pathlib import Path
 from ..config import Config
 from ..domain import Draft, Quality
 from ..storage import Store
+from .audio import encoding, validate_join_span, validate_output, verify_samples
 from .formats import layout_for, render_layout
 from .grading import stage_lut
 from .graph import Segment, build_graph
@@ -65,6 +66,10 @@ class Renderer:
                 for i, s in enumerate(segments)
             ]
         lossless = draft.settings.quality == Quality.LOSSLESS
+        if len(segments) > 1 and not draft.mute:
+            for segment in segments:
+                if segment.start == 0 and segment.end is None:
+                    await validate_join_span(segment.path, segment.info, self.config)
         layout = render_layout(main, draft.settings.quality, draft.settings.color_grade)
         if lossless:
             for info in infos:
@@ -108,7 +113,14 @@ class Renderer:
         stage_lut(draft.settings.color_grade, self.store, folder)
         if graph.duration > self.config.max_video_seconds:
             raise ValueError("مدت خروجی از محدودیت تنظیم‌شده بیشتر می‌شود.")
-        output = folder / ("edited.mkv" if lossless else "edited.mp4")
+        audio_plan = encoding(
+            main,
+            filtered=graph.audio is not None,
+            lossless=lossless,
+            muted=draft.mute,
+            normalize=graph.copy_audio and main.video_start != 0,
+        )
+        output = folder / ("edited.mkv" if audio_plan.matroska else "edited.mp4")
         graph_file = folder / "filters.txt"
         graph_file.write_text(graph.filters, encoding="utf-8")
         args = [
@@ -116,6 +128,7 @@ class Renderer:
             "-hide_banner",
             "-nostdin",
             "-y",
+            "-copyts",
             "-loglevel",
             "warning",
             "-filter_complex_threads",
@@ -126,24 +139,16 @@ class Renderer:
         for overlay in overlays:
             args.extend(["-i", str(overlay.path)])
         args.extend(["-filter_complex", graph.filters, "-map", f"[{graph.video}]"])
-        native_audio = main.audio_codec == "flac" or (main.audio_codec or "").startswith("pcm_")
-        copy_audio = graph.copy_audio and (
-            native_audio if lossless else main.audio_codec in {"aac", "mp3", "alac"}
-        )
         if graph.audio:
             args.extend(["-map", f"[{graph.audio}]"])
         elif graph.copy_audio:
             args.extend(["-map", f"0:{main.audio_index}"])
-        if draft.mute or not any(info.audio_codec for info in infos):
+            if main.video_start:
+                args.extend(["-af", f"asetpts=PTS-{main.video_start:.9f}/TB"])
+        if audio_plan.codec is None:
             args.append("-an")
-        elif copy_audio:
-            args.extend(["-c:a", "copy"])
         else:
-            # AAC priming metadata is not preserved by every Matroska muxer version.
-            # Float PCM preserves the decoder's samples without shifting video timestamps.
-            args.extend(["-c:a", "pcm_f32le" if lossless else "aac"])
-            if not lossless:
-                args.extend(["-b:a", "192k"])
+            args.extend(["-c:a", audio_plan.codec])
         if lossless:
             args.extend(
                 ["-c:v", "ffv1", "-level", "3", "-pix_fmt", graph.pixel_format, "-slicecrc", "1"]
@@ -159,10 +164,10 @@ class Renderer:
                     "slow" if draft.settings.quality == Quality.HIGH else "veryfast",
                     "-pix_fmt",
                     "yuv420p",
-                    "-movflags",
-                    "+faststart",
                 ]
             )
+        if not audio_plan.matroska:
+            args.extend(["-movflags", "+faststart"])
         # Use the filter's microsecond timebase to avoid quantizing VFR frames to a nominal FPS.
         args.extend(
             [
@@ -208,8 +213,11 @@ class Renderer:
             raise ValueError("ابعاد خروجی با ابعاد مورد انتظار تطابق ندارد.")
         if abs(result.duration - graph.duration) > max(0.25, 3 / float(main.fps)):
             raise ValueError("مدت خروجی با پروژه تطابق ندارد؛ فایل ورودی را بررسی کنید.")
-        if result.audio_duration and result.audio_duration > result.duration + 0.25:
-            raise ValueError("صدای خروجی از تصویر طولانی‌تر است؛ فایل ورودی را بررسی کنید.")
+        validate_output(result, main, audio_plan, graph.duration, graph.audio_layout)
+        if audio_plan.codec:
+            await verify_samples(
+                paths[main_index], output, self.config, main, result, graph.audio_samples
+            )
         if not preview and len(segments) == 1 and draft.trim_start == 0 and draft.trim_end is None:
             # Count actual decoded frames if the container does not expose a frame count.
             original_count = main.frames
@@ -225,8 +233,12 @@ class Renderer:
             if graph.normalize_fps
             else "زمان‌بندی فریم‌ها بدون تبدیل اجباری FPS پردازش شد."
         )
-        if copy_audio:
+        if audio_plan.copied:
             notice += " صدا بدون encode مجدد کپی شد."
+        elif audio_plan.codec:
+            notice += " صدا بدون فشرده‌سازی با اتلاف ذخیره شد."
+        if audio_plan.matroska and not lossless:
+            notice += " برای حفظ صدا، ویدیوی H.264 در فایل MKV قرار گرفت."
         return RenderResult(output, result, notice)
 
     async def thumbnail(self, video: Path, dst: Path) -> Path:

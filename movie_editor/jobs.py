@@ -126,6 +126,7 @@ class JobService:
             as_file = (
                 comparison
                 or gif is not None
+                or result.path.suffix.lower() == ".mkv"
                 or not preview
                 and (
                     draft.settings.delivery == Delivery.FILE
@@ -145,7 +146,8 @@ class JobService:
                 ]
             )
             caption = (
-                "پیش‌نمایش کوتاه: حداکثر ۸ ثانیه از ویدیوی اصلی و ۳ ثانیه از ابتدا/انتها."
+                "پیش‌نمایش کوتاه: حداکثر ۸ ثانیه از ویدیوی اصلی و ۳ ثانیه از ابتدا/انتها. "
+                + result.notice
                 if preview
                 else "خروجی آماده است. " + result.notice
             )

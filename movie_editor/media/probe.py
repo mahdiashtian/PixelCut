@@ -29,6 +29,24 @@ class MediaInfo:
     video_index: int
     audio_index: int | None
     audio_duration: float | None
+    audio_rate: int = 0
+    audio_channels: int = 0
+    audio_layout: str = ""
+    audio_format: str = ""
+
+
+def stream_duration(stream: dict) -> float | None:
+    if stream.get("duration"):
+        return float(stream["duration"])
+    tagged = stream.get("tags", {}).get("DURATION")
+    if tagged:
+        try:
+            hours, minutes, seconds = tagged.split(":")
+            end = int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+            return end - float(stream.get("start_time") or 0)
+        except (ValueError, TypeError):
+            pass
+    return None
 
 
 def fraction(value: str | None, fallback: str) -> Fraction:
@@ -59,7 +77,12 @@ async def inspect(path: Path, config: Config, count_frames: bool = False) -> Med
     )
     if video is None:
         raise ValueError("فایل باید ویدیو داشته باشد.")
-    audio = next((s for s in streams if s.get("codec_type") == "audio"), {})
+    audios = [s for s in streams if s.get("codec_type") == "audio"]
+    if len(audios) > 1:
+        raise ValueError(
+            "ویدیوی چندترک صوتی فعلاً پشتیبانی نمی‌شود؛ برای حفظ همهٔ صداها، رندر انجام نشد."
+        )
+    audio = audios[0] if audios else {}
     rotation = int(float(video.get("tags", {}).get("rotate", 0)))
     for side in video.get("side_data_list", []):
         if "rotation" in side:
@@ -73,7 +96,9 @@ async def inspect(path: Path, config: Config, count_frames: bool = False) -> Med
     if rotation % 180:
         width, height = height, width
     raw_frames = video.get("nb_read_frames") if count_frames else video.get("nb_frames")
-    duration = float(video.get("duration") or data.get("format", {}).get("duration") or 0)
+    duration = stream_duration(video) or (
+        float(data.get("format", {}).get("duration") or 0) - float(video.get("start_time") or 0)
+    )
     info = MediaInfo(
         width,
         height,
@@ -92,7 +117,11 @@ async def inspect(path: Path, config: Config, count_frames: bool = False) -> Med
         rotation,
         int(video["index"]),
         int(audio["index"]) if audio else None,
-        float(audio["duration"]) if audio.get("duration") else None,
+        stream_duration(audio),
+        int(audio.get("sample_rate") or 0),
+        int(audio.get("channels") or 0),
+        audio.get("channel_layout") or "",
+        audio.get("sample_fmt") or "",
     )
     if not 0 < info.duration <= config.max_video_seconds:
         raise ValueError(f"مدت ویدیو باید بین صفر و {config.max_video_seconds} ثانیه باشد.")

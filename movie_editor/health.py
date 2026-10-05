@@ -27,12 +27,16 @@ async def check(config: Config) -> None:
             "colorchannelmixer",
             "curves",
             "vignette",
+            "aresample",
+            "apad",
+            "atrim",
+            "pan",
         )
         if f" {name} " not in filters
     ]
     missing.extend(
         name
-        for name in ("libx264", "ffv1", "aac", "pcm_f32le", "gif")
+        for name in ("libx264", "ffv1", "pcm_f32le", "pcm_f64le", "gif")
         if f" {name} " not in encoders
     )
     if missing:
