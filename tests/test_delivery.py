@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock
 import pytest
 from telethon.helpers import _FileStream
 
-from movie_editor.domain import Draft, Quality
+from movie_editor.domain import Draft, Look, Quality
 from movie_editor.jobs import JobService
 from movie_editor.media.limits import check_output
 from movie_editor.media.renderer import Renderer
@@ -134,9 +134,13 @@ def test_render_size_limit_is_independent_of_single_upload(config, tmp_path):
 
 
 @pytest.mark.integration
-async def test_failed_upload_retries_after_restart_without_rendering_again(config, store, tmp_path):
+@pytest.mark.parametrize("look", [Look.NONE, Look.BW])
+async def test_failed_upload_retries_after_restart_without_rendering_again(
+    config, store, tmp_path, look
+):
     source = await clip(config, tmp_path / "source.mp4", duration=0.5)
     draft = Draft("retry", str(source), source.name, text="FIRST")
+    draft.settings.color_grade.look = look
     store.save_draft(draft)
     status = SimpleNamespace(edit=AsyncMock())
     client = SimpleNamespace(
@@ -148,9 +152,11 @@ async def test_failed_upload_retries_after_restart_without_rendering_again(confi
     service = JobService(client, config, store, renderer)
     await service.run(draft, False, AsyncMock())
     folder = config.data_dir / "jobs" / draft.id / "render"
-    output = folder / "edited.mkv"
+    pending = service.pending(draft)
+    assert pending
+    output = folder / pending["path"]
+    assert output.suffix == (".mp4" if look == Look.NONE else ".mkv")
     before = output.read_bytes()
-    assert service.pending(draft)
     assert "ConnectionError" in status.edit.call_args.args[0]
     assert status.edit.call_args.kwargs["buttons"]
     draft.text = "LATER"
@@ -166,7 +172,7 @@ async def test_failed_upload_retries_after_restart_without_rendering_again(confi
     restarted = JobService(client, config, store, new_renderer)
     await restarted.run(draft, False, AsyncMock(), retry=True)
     assert sent[0][0] == before and sent[0][1]["force_document"]
-    assert "CRF 0" in sent[0][1]["caption"]
+    assert ("CRF 0" if look == Look.NONE else "FFV1") in sent[0][1]["caption"]
     new_renderer.render.assert_not_awaited()
     renderer.render.assert_awaited_once()
     assert not output.exists() and not restarted.pending(draft)

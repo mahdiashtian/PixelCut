@@ -4,7 +4,7 @@ from pathlib import Path
 
 from ..config import Config
 from ..domain import GifRange
-from .limits import check_output, check_space, guarded_progress
+from .limits import check_output, check_resources, check_space, guarded_progress
 from .probe import inspect
 from .process import Progress, encode
 from .result import RenderResult
@@ -48,6 +48,8 @@ class GifExporter:
             "warning",
             "-filter_complex_threads",
             str(self.config.threads),
+            "-threads",
+            str(min(self.config.threads, 2)),
             "-i",
             str(source),
             "-filter_complex",
@@ -80,6 +82,8 @@ class GifExporter:
             end - start,
             self.config.max_render_seconds,
             guarded_progress(self.config, output, progress),
+            memory_mb=self.config.max_ffmpeg_memory_mb,
+            watchdog=lambda: check_resources(self.config, output),
         )
         check_output(self.config, output)
         result = await inspect(output, self.config, count_frames=True)

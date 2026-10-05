@@ -107,7 +107,13 @@ class AudioEncoding:
 
 
 def encoding(
-    info: MediaInfo, *, filtered: bool, lossless: bool, muted: bool, normalize: bool = False
+    info: MediaInfo,
+    *,
+    filtered: bool,
+    lossless: bool,
+    muted: bool,
+    normalize: bool = False,
+    prefer_mp4: bool = False,
 ) -> AudioEncoding:
     if muted:
         return AudioEncoding(None, lossless)
@@ -119,14 +125,22 @@ def encoding(
         return AudioEncoding(None, lossless)
     if normalize and info.audio_format.rstrip("p") == "s64":
         raise ValueError("تغییر زمان‌بندی PCM صحیح ۶۴ بیت بدون کاهش دقت فعلاً پشتیبانی نمی‌شود.")
-    if not normalize and not lossless and info.audio_codec in {"aac", "mp3", "alac"}:
+    # Native YUV H.264 lossless can use MP4 too. Keep AAC/MP3 priming and
+    # discard padding in their original compatible container instead of expanding audio.
+    if (
+        not normalize
+        and (not lossless or prefer_mp4)
+        and info.audio_codec in {"aac", "mp3", "alac"}
+    ):
         return AudioEncoding("copy", False, True)
     if not normalize and (
-        info.audio_codec in {"flac", "alac"} or info.audio_codec.startswith("pcm_")
+        info.audio_codec in {"flac", "alac", "wavpack"} or info.audio_codec.startswith("pcm_")
     ):
         return AudioEncoding("copy", True, True)
     precision = "64" if info.audio_format.rstrip("p") in {"dbl", "s32", "s64"} else "32"
-    return AudioEncoding(f"pcm_f{precision}le", True)
+    # WavPack stores every IEEE float32 bit, avoiding large uncompressed PCM for AAC/Opus.
+    # Filtered double-precision audio still uses PCM64: no 64->32-bit quantization.
+    return AudioEncoding("wavpack" if precision == "32" else "pcm_f64le", True)
 
 
 def validate_output(

@@ -11,9 +11,9 @@ from .formats import layout_for, render_layout
 from .grading import stage_lut
 from .graph import Segment, build_graph
 from .graphics import find_font, logo_overlay, text_overlay
-from .limits import check_output, check_space, guarded_progress
+from .limits import check_output, check_resources, check_space, guarded_progress
 from .probe import inspect
-from .process import Progress, capture, encode
+from .process import Progress, Stage, capture, encode
 from .result import RenderResult
 
 
@@ -23,7 +23,12 @@ class Renderer:
         self.store = store
 
     async def render(
-        self, draft: Draft, folder: Path, progress: Progress | None = None, preview: bool = False
+        self,
+        draft: Draft,
+        folder: Path,
+        progress: Progress | None = None,
+        preview: bool = False,
+        stage: Stage | None = None,
     ) -> RenderResult:
         if preview:
             draft = Draft.from_dict(draft.to_dict())
@@ -38,6 +43,8 @@ class Renderer:
         paths.append(Path(draft.source).resolve())
         if draft.outro_id:
             paths.append(Path(self.store.asset(draft.outro_id, "outro").path).resolve())
+        if stage:
+            await stage("در حال خواندن مشخصات ویدیو…")
         infos = [await inspect(path, self.config) for path in paths]
         main_index = 1 if draft.intro_id else 0
         main = infos[main_index]
@@ -119,6 +126,9 @@ class Renderer:
             lossless=lossless,
             muted=draft.mute,
             normalize=graph.copy_audio and main.video_start != 0,
+            prefer_mp4=(
+                lossless and graph.pixel_format != "bgr0" and "mp4" in main.container.split(",")
+            ),
         )
         output = folder / ("edited.mkv" if audio_plan.matroska else "edited.mp4")
         graph_file = folder / "filters.txt"
@@ -135,9 +145,9 @@ class Renderer:
             str(self.config.threads),
         ]
         for path in paths:
-            args.extend(["-i", str(path)])
+            args.extend(["-threads", str(min(self.config.threads, 2)), "-i", str(path)])
         for overlay in overlays:
-            args.extend(["-i", str(overlay.path)])
+            args.extend(["-threads", "1", "-i", str(overlay.path)])
         args.extend(["-filter_complex", graph.filters, "-map", f"[{graph.video}]"])
         if graph.audio:
             args.extend(["-map", f"[{graph.audio}]"])
@@ -149,6 +159,10 @@ class Renderer:
             args.append("-an")
         else:
             args.extend(["-c:a", audio_plan.codec])
+            if audio_plan.codec == "wavpack":
+                # A decoded MP3's initial frame can have fewer than 128 samples after
+                # encoder-delay removal. Fix the coding block size without padding audio.
+                args.extend(["-sample_fmt:a", "fltp", "-frame_size:a", "4096"])
         if lossless:
             if graph.pixel_format == "bgr0":
                 args.extend(["-c:v", "ffv1", "-level", "3", "-pix_fmt", "bgr0", "-slicecrc", "1"])
@@ -179,6 +193,10 @@ class Renderer:
                     "-pix_fmt",
                     "yuv420p",
                 ]
+            )
+        if not lossless or graph.pixel_format != "bgr0":
+            args.extend(
+                ["-rc-lookahead", "8", "-x264-params", "sync-lookahead=0:lookahead-threads=1"]
             )
         if not audio_plan.matroska:
             args.extend(["-movflags", "+faststart"])
@@ -211,8 +229,12 @@ class Renderer:
                 value = "rgb"
             if value not in {"unknown", "reserved", "unspecified"}:
                 args.extend([flag, value])
-        args.extend(["-progress", "pipe:1", "-nostats", str(output)])
+        args.extend(
+            ["-max_interleave_delta", "1000000", "-progress", "pipe:1", "-nostats", str(output)]
+        )
 
+        if stage:
+            await stage("در حال رندر؛ ابعاد و کیفیت انتخاب‌شده حفظ می‌شوند…")
         await encode(
             args,
             folder / "ffmpeg.log",
@@ -220,7 +242,11 @@ class Renderer:
             self.config.max_render_seconds,
             guarded_progress(self.config, output, progress, multipart=True),
             cwd=folder,
+            memory_mb=self.config.max_ffmpeg_memory_mb,
+            watchdog=lambda: check_resources(self.config, output, multipart=True),
         )
+        if stage:
+            await stage("رندر تمام شد؛ در حال بررسی مشخصات و صدا…")
         result = await inspect(output, self.config)
         check_output(self.config, output, multipart=True)
         if (result.width, result.height) != (width, height):
@@ -233,6 +259,8 @@ class Renderer:
                 paths[main_index], output, self.config, main, result, graph.audio_samples
             )
         if not preview and len(segments) == 1 and draft.trim_start == 0 and draft.trim_end is None:
+            if stage:
+                await stage("در حال شمارش فریم‌ها؛ این بررسی برای فیلم بلند زمان می‌برد…")
             # Count actual decoded frames if the container does not expose a frame count.
             original_count = main.frames
             if original_count is None:
@@ -250,7 +278,11 @@ class Renderer:
         if audio_plan.copied:
             notice += " صدا بدون encode مجدد کپی شد."
         elif audio_plan.codec:
-            notice += " صدا بدون فشرده‌سازی با اتلاف ذخیره شد."
+            notice += (
+                " صدا با WavPack بدون اتلاف و بدون تغییر نمونه‌ها فشرده شد."
+                if audio_plan.codec == "wavpack"
+                else " صدا بدون فشرده‌سازی با اتلاف ذخیره شد."
+            )
         if audio_plan.matroska and not lossless:
             notice += " برای حفظ صدا، ویدیوی H.264 در فایل MKV قرار گرفت."
         if lossless:

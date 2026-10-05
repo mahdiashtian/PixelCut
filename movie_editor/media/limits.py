@@ -21,12 +21,16 @@ def check_output(config: Config, output: Path, *, multipart: bool = False) -> No
         )
 
 
+def check_resources(config: Config, output: Path, *, multipart: bool = False) -> None:
+    check_output(config, output, multipart=multipart)
+    check_space(config, output.parent)
+
+
 def guarded_progress(
     config: Config, output: Path, progress: Progress | None, *, multipart: bool = False
 ) -> Progress:
     async def guard(percent: float) -> None:
-        check_output(config, output, multipart=multipart)
-        check_space(config, output.parent)
+        check_resources(config, output, multipart=multipart)
         if progress:
             await progress(percent)
 

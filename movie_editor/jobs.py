@@ -163,7 +163,10 @@ class JobService:
             else:
                 (folder / "pending.json").unlink(missing_ok=True)
                 (folder / "export.manifest.json").unlink(missing_ok=True)
-                result = await self.renderer.render(draft, folder, render_progress, preview=preview)
+                async with asyncio.timeout(self.config.max_render_seconds):
+                    result = await self.renderer.render(
+                        draft, folder, render_progress, preview=preview, stage=update
+                    )
             completed_render = True
             if final_video:
                 for name in ("edited.mp4", "edited.mkv"):

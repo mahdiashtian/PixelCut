@@ -33,6 +33,7 @@ class MediaInfo:
     audio_channels: int = 0
     audio_layout: str = ""
     audio_format: str = ""
+    container: str = ""
 
 
 def stream_duration(stream: dict) -> float | None:
@@ -58,14 +59,26 @@ def fraction(value: str | None, fallback: str) -> Fraction:
 
 
 async def inspect(path: Path, config: Config, count_frames: bool = False) -> MediaInfo:
-    args = [config.ffprobe, "-v", "error", "-show_streams", "-show_format", "-of", "json"]
+    args = [
+        config.ffprobe,
+        "-v",
+        "error",
+        "-threads",
+        str(min(config.threads, 2)),
+        "-show_streams",
+        "-show_format",
+        "-of",
+        "json",
+    ]
     if count_frames:
         args.append("-count_frames")
     if path.suffix.lower() == ".gif":
         # Read the actual centisecond delays instead of clamping fast GIFs to 100 ms.
         args.extend(["-min_delay", "1"])
     args.append(str(path))
-    data = json.loads(await capture(args, timeout=300 if count_frames else 60))
+    data = json.loads(
+        await capture(args, timeout=config.max_render_seconds if count_frames else 60)
+    )
     streams = data.get("streams", [])
     video = next(
         (
@@ -122,6 +135,7 @@ async def inspect(path: Path, config: Config, count_frames: bool = False) -> Med
         int(audio.get("channels") or 0),
         audio.get("channel_layout") or "",
         audio.get("sample_fmt") or "",
+        data.get("format", {}).get("format_name") or "",
     )
     if not 0 < info.duration <= config.max_video_seconds:
         raise ValueError(f"مدت ویدیو باید بین صفر و {config.max_video_seconds} ثانیه باشد.")

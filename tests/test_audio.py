@@ -283,6 +283,39 @@ async def test_whole_clip_keeps_all_decoded_samples_for_common_codecs(
     assert result.info.audio_rate == 48000
 
 
+@pytest.mark.parametrize("codec", ["aac", "mp3", "alac"])
+async def test_native_lossless_watermark_copies_compressed_audio(config, store, tmp_path, codec):
+    source = await sound_clip(config, tmp_path / "source.mp4", codec=codec, duration=3)
+    draft = Draft("native-copy", str(source), source.name, text="PixelCut")
+    assert draft.settings.quality == Quality.LOSSLESS
+    result = await Renderer(config, store).render(draft, tmp_path / "render")
+    assert result.path.suffix == ".mp4"
+    assert result.info.audio_codec == codec
+    assert await samples(config, source) == await samples(config, result.path)
+
+    async def packets(path):
+        return await capture(
+            [
+                config.ffmpeg,
+                "-v",
+                "error",
+                "-i",
+                str(path),
+                "-map",
+                "0:a:0",
+                "-c:a",
+                "copy",
+                "-f",
+                "hash",
+                "-hash",
+                "sha256",
+                "-",
+            ]
+        )
+
+    assert await packets(source) == await packets(result.path)
+
+
 async def test_mixed_rates_keep_highest_rate_and_do_not_change_its_samples(config, store, tmp_path):
     intro = await sound_clip(
         config, tmp_path / "intro.mkv", rate=44100, channels=1, duration=1, constant=0.125
