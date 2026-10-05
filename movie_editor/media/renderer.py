@@ -1,4 +1,4 @@
-"""Inspect inputs, prepare overlays, then encode once and verify the result."""
+"""Compose edits in one graph, control encoding size, and verify the result."""
 
 import asyncio
 from pathlib import Path
@@ -14,6 +14,7 @@ from .graphics import find_font, logo_overlay, text_overlay
 from .limits import check_output, check_resources, check_space, guarded_progress
 from .probe import inspect
 from .process import Progress, Stage, capture, encode
+from .rate_control import clean_stats, plan_rate
 from .result import RenderResult
 
 
@@ -85,8 +86,9 @@ class Renderer:
                         "برای اتصال بدون افت، فرمت رنگ کلیپ‌ها باید یکسان باشد؛ "
                         "کلیپ ابتدا/انتهای سازگار انتخاب کنید."
                     )
-        grid_x = layout.horizontal_grid if lossless else 2
-        grid_y = layout.vertical_grid if lossless else 2
+        native_layout = draft.settings.quality in {Quality.LOSSLESS, Quality.SOURCE}
+        grid_x = layout.horizontal_grid if native_layout else 2
+        grid_y = layout.vertical_grid if native_layout else 2
         width = main.width + (-main.width % grid_x)
         height = main.height + (-main.height % grid_y)
         overlays = []
@@ -126,9 +128,18 @@ class Renderer:
             lossless=lossless,
             muted=draft.mute,
             normalize=graph.copy_audio and main.video_start != 0,
+            source_sized=draft.settings.quality == Quality.SOURCE,
             prefer_mp4=(
                 lossless and graph.pixel_format != "bgr0" and "mp4" in main.container.split(",")
             ),
+        )
+        source_sized = draft.settings.quality == Quality.SOURCE
+        if source_sized and stage:
+            await stage("در حال محاسبهٔ حجم متناسب با ویدیوی ورودی…")
+        rate_plan = (
+            await plan_rate(segments, graph, audio_plan, self.config, main_index)
+            if source_sized
+            else None
         )
         output = folder / ("edited.mkv" if audio_plan.matroska else "edited.mp4")
         graph_file = folder / "filters.txt"
@@ -163,7 +174,10 @@ class Renderer:
                 # A decoded MP3's initial frame can have fewer than 128 samples after
                 # encoder-delay removal. Fix the coding block size without padding audio.
                 args.extend(["-sample_fmt:a", "fltp", "-frame_size:a", "4096"])
-        if lossless:
+        video_start = len(args)
+        if rate_plan:
+            args.extend(rate_plan.options(self.config, 2))
+        elif lossless:
             if graph.pixel_format == "bgr0":
                 args.extend(["-c:v", "ffv1", "-level", "3", "-pix_fmt", "bgr0", "-slicecrc", "1"])
             else:
@@ -194,12 +208,11 @@ class Renderer:
                     "yuv420p",
                 ]
             )
-        if not lossless or graph.pixel_format != "bgr0":
+        if rate_plan is None and (not lossless or graph.pixel_format != "bgr0"):
             args.extend(
                 ["-rc-lookahead", "8", "-x264-params", "sync-lookahead=0:lookahead-threads=1"]
             )
-        if not audio_plan.matroska:
-            args.extend(["-movflags", "+faststart"])
+        video_end = len(args)
         # Use the filter's microsecond timebase to avoid quantizing VFR frames to a nominal FPS.
         args.extend(
             [
@@ -229,22 +242,66 @@ class Renderer:
                 value = "rgb"
             if value not in {"unknown", "reserved", "unspecified"}:
                 args.extend([flag, value])
-        args.extend(
-            ["-max_interleave_delta", "1000000", "-progress", "pipe:1", "-nostats", str(output)]
-        )
+        args.extend(["-max_interleave_delta", "1000000", "-progress", "pipe:1", "-nostats"])
 
-        if stage:
-            await stage("در حال رندر؛ ابعاد و کیفیت انتخاب‌شده حفظ می‌شوند…")
-        await encode(
-            args,
-            folder / "ffmpeg.log",
-            graph.duration,
-            self.config.max_render_seconds,
-            guarded_progress(self.config, output, progress, multipart=True),
-            cwd=folder,
-            memory_mb=self.config.max_ffmpeg_memory_mb,
-            watchdog=lambda: check_resources(self.config, output, multipart=True),
-        )
+        def watch_output() -> None:
+            check_resources(self.config, output, multipart=True)
+            if rate_plan:
+                rate_plan.check_size(output)
+
+        async def first_progress(percent: float) -> None:
+            if progress:
+                await progress(percent * 0.45)
+
+        async def final_progress(percent: float) -> None:
+            if progress:
+                await progress(45 + percent * 0.54 if rate_plan else percent)
+
+        try:
+            if rate_plan:
+                clean_stats(folder)
+                output.unlink(missing_ok=True)
+                if stage:
+                    await stage(
+                        "مرحلهٔ ۱ از ۲: تحلیل فشرده‌سازی برای کنترل حجم؛ "
+                        f"سقف خروجی حدود {rate_plan.ceiling_bytes / 1024**2:.1f} MiB است…"
+                    )
+                first_args = (
+                    args[:video_start] + rate_plan.options(self.config, 1) + args[video_end:]
+                )
+                await encode(
+                    [*first_args, "-f", "null", "-"],
+                    folder / "ffmpeg.pass1.log",
+                    graph.duration,
+                    self.config.max_render_seconds,
+                    first_progress,
+                    cwd=folder,
+                    memory_mb=self.config.max_ffmpeg_memory_mb,
+                    watchdog=watch_output,
+                )
+            if not audio_plan.matroska:
+                args.extend(["-movflags", "+faststart"])
+            if stage:
+                await stage(
+                    "مرحلهٔ ۲ از ۲: ساخت خروجی با حجم متناسب؛ ابعاد و زمان‌بندی فریم حفظ می‌شوند…"
+                    if rate_plan
+                    else "در حال رندر؛ ابعاد و کیفیت انتخاب‌شده حفظ می‌شوند…"
+                )
+            await encode(
+                [*args, str(output)],
+                folder / "ffmpeg.log",
+                graph.duration,
+                self.config.max_render_seconds,
+                guarded_progress(self.config, output, final_progress, multipart=True),
+                cwd=folder,
+                memory_mb=self.config.max_ffmpeg_memory_mb,
+                watchdog=watch_output,
+            )
+        finally:
+            if rate_plan:
+                clean_stats(folder)
+        if rate_plan:
+            rate_plan.check_size(output)
         if stage:
             await stage("رندر تمام شد؛ در حال بررسی مشخصات و صدا…")
         result = await inspect(output, self.config)
@@ -284,12 +341,18 @@ class Renderer:
                 else " صدا بدون فشرده‌سازی با اتلاف ذخیره شد."
             )
         if audio_plan.matroska and not lossless:
-            notice += " برای حفظ صدا، ویدیوی H.264 در فایل MKV قرار گرفت."
+            video_codec = "HEVC" if result.video_codec == "hevc" else "H.264"
+            notice += f" برای حفظ صدا، ویدیوی {video_codec} در فایل MKV قرار گرفت."
         if lossless:
             notice += (
                 " تصویر با FFV1 بدون اتلاف ذخیره شد."
                 if graph.pixel_format == "bgr0"
                 else " تصویر با H.264 lossless (CRF 0) بدون اتلاف ذخیره شد."
+            )
+        elif source_sized:
+            notice += (
+                " تصویر با فشرده‌سازی دو مرحله‌ای و حجم متناسب با ورودی ذخیره شد؛ "
+                "این حالت Lossless نیست."
             )
         return RenderResult(output, result, notice)
 

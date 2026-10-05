@@ -36,7 +36,7 @@ async def check(config: Config) -> None:
     ]
     missing.extend(
         name
-        for name in ("libx264", "ffv1", "wavpack", "pcm_f64le", "gif")
+        for name in ("libx264", "libx264rgb", "libx265", "ffv1", "wavpack", "pcm_f64le", "gif")
         if f" {name} " not in encoders
     )
     if missing:

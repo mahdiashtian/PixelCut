@@ -54,6 +54,7 @@ async def test_lossless_no_edit_has_identical_decoded_pixels(config, store, tmp_
         ]
     )
     draft = Draft("native", str(source), "source.mkv")
+    draft.settings.quality = Quality.LOSSLESS
     assert draft.settings.quality == Quality.LOSSLESS
     result = await Renderer(config, store).render(draft, tmp_path / "render")
     assert result.info.pixel_format == pixel_format
@@ -86,6 +87,7 @@ async def test_lossless_rejects_intro_that_would_lose_color_data(
     )
     store.add_asset(Asset("intro", "intro", "intro.mkv", str(intro)))
     draft = Draft("native", str(source), "source.mp4", intro_id="intro")
+    draft.settings.quality = Quality.LOSSLESS
     folder = tmp_path / "render"
     with pytest.raises(ValueError, match="فرمت رنگ"):
         await Renderer(config, store).render(draft, folder)
@@ -96,6 +98,7 @@ async def test_lossless_rejects_intro_that_would_lose_color_data(
 async def test_lossless_watermark_only_changes_its_region(config, store, tmp_path, color):
     source = await clip(config, tmp_path / "source.mp4", fps="30", duration=0.5)
     draft = Draft("native", str(source), "source.mp4", text="TEST")
+    draft.settings.quality = Quality.LOSSLESS
     draft.settings.text_style.color = color
     result = await Renderer(config, store).render(draft, tmp_path / "render")
     assert result.info.pixel_format == "yuv420p"

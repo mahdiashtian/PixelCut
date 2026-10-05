@@ -43,8 +43,9 @@ def build_graph(draft: Draft, segments: list[Segment], overlays: list[Overlay]) 
     main = segments[main_index]
     lossless = draft.settings.quality == Quality.LOSSLESS
     layout = render_layout(main.info, draft.settings.quality, draft.settings.color_grade)
-    gx = layout.horizontal_grid if lossless else 2
-    gy = layout.vertical_grid if lossless else 2
+    native_layout = draft.settings.quality in {Quality.LOSSLESS, Quality.SOURCE}
+    gx = layout.horizontal_grid if native_layout else 2
+    gy = layout.vertical_grid if native_layout else 2
     width = main.info.width + (-main.info.width % gx)
     height = main.info.height + (-main.info.height % gy)
     joins: list[Join] = []

@@ -140,6 +140,7 @@ async def test_failed_upload_retries_after_restart_without_rendering_again(
 ):
     source = await clip(config, tmp_path / "source.mp4", duration=0.5)
     draft = Draft("retry", str(source), source.name, text="FIRST")
+    draft.settings.quality = Quality.LOSSLESS
     draft.settings.color_grade.look = look
     store.save_draft(draft)
     status = SimpleNamespace(edit=AsyncMock())

@@ -551,12 +551,12 @@ class Controller:
             await self.show()
         elif action == "compact":
             await self.say(
-                "خروجی فشرده: تصویر H.264 با کیفیت بالا و حجم کمتر ساخته می‌شود. "
-                "این حالت تصویر را با اتلاف فشرده می‌کند؛ کیفیت آن دقیقاً برابر خروجی lossless نیست. "
+                "خروجی متناسب با ورودی: حجم با رندر دو مرحله‌ای کنترل می‌شود. "
+                "این حالت تصویر را با اتلاف فشرده می‌کند؛ پیکسل‌ها عین خروجی Lossless نیستند. "
                 "ابعاد و زمان‌بندی فریم‌ها حفظ و صدا بدون فشرده‌سازی با اتلاف دوباره نگه‌داری می‌شود. "
                 "در برش/اتصال، برای حفظ صدا خروجی MKV است.",
                 [
-                    [b("ساخت خروجی فشرده", f"{scope}:compact_render")],
+                    [b("ساخت خروجی با حجم متناسب", f"{scope}:compact_render")],
                     [b("بازگشت", f"{scope}:back")],
                 ],
             )
@@ -570,7 +570,7 @@ class Controller:
         elif action in {"render", "preview", "compact_render"}:
             snapshot = Draft.from_dict(self.draft.to_dict())
             if action == "compact_render":
-                snapshot.settings.quality = Quality.HIGH
+                snapshot.settings.quality = Quality.SOURCE
                 snapshot.settings.delivery = Delivery.FILE
             self.activity.start(
                 "رندر", lambda: self.jobs.run(snapshot, action == "preview", self.show)
@@ -686,9 +686,10 @@ class Controller:
             )
         elif action == "quality":
             await self.say(
-                "خروجی بدون افت کیفیت پیش‌فرض است و حجم بیشتری دارد. "
-                "گزینه‌های حجم کمتر و رندر سریع، تصویر را با افت فشرده می‌کنند. "
-                "برای حفظ صدا، خروجی برش و اتصال فایل MKV است.",
+                "پیشنهاد: حجم متناسب با ورودی؛ رندر دو مرحله‌ای با حفظ ابعاد و فریم‌ها. "
+                "این حالت تصویر را بازفشرده می‌کند و پیکسل‌های کاملاً یکسان تضمین نمی‌شوند. "
+                "Lossless حجم بسیار بیشتری دارد و فقط با انتخاب صریح فعال می‌شود. "
+                "در برش/اتصال، صدای پردازش‌شده بدون اتلاف ذخیره می‌شود و به حجم اضافه می‌کند.",
                 [
                     [b(label, f"{scope}:set_quality:{key.value}")]
                     for key, label in views.QUALITY_NAMES.items()

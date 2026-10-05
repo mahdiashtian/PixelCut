@@ -118,7 +118,8 @@ async def test_watermark_preserves_each_frame_timestamp_and_audio(
         assert await pcm(config, source) == await pcm(config, result.path)
 
 
-async def test_dynamic_text_changes_on_light_and_dark_frames(config, store, tmp_path):
+@pytest.mark.parametrize("quality", [Quality.LOSSLESS, Quality.SOURCE])
+async def test_dynamic_text_changes_on_light_and_dark_frames(config, store, tmp_path, quality):
     dark = await clip(
         config, tmp_path / "dark.mp4", color="black", audio=False, fps="30", duration=1
     )
@@ -148,6 +149,7 @@ async def test_dynamic_text_changes_on_light_and_dark_frames(config, store, tmp_
         ]
     )
     draft = Draft("contrast", str(source), "contrast.mp4", text="TEST")
+    draft.settings.quality = quality
     draft.settings.text_style.width_percent = 50
     draft.settings.text_style.color = Color.DYNAMIC
     result = await Renderer(config, store).render(draft, tmp_path / "render")

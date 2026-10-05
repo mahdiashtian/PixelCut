@@ -114,6 +114,7 @@ def encoding(
     muted: bool,
     normalize: bool = False,
     prefer_mp4: bool = False,
+    source_sized: bool = False,
 ) -> AudioEncoding:
     if muted:
         return AudioEncoding(None, lossless)
@@ -125,11 +126,21 @@ def encoding(
         return AudioEncoding(None, lossless)
     if normalize and info.audio_format.rstrip("p") == "s64":
         raise ValueError("تغییر زمان‌بندی PCM صحیح ۶۴ بیت بدون کاهش دقت فعلاً پشتیبانی نمی‌شود.")
+    if (
+        source_sized
+        and not normalize
+        and "matroska" in info.container.split(",")
+        and info.audio_codec in {"aac", "mp3", "opus", "vorbis", "ac3", "eac3", "dts"}
+    ):
+        # Keep compressed audio in its original container, including codec delay.
+        # Moving AAC from MKV into MP4 can change its decoder priming interpretation.
+        return AudioEncoding("copy", True, True)
     # Native YUV H.264 lossless can use MP4 too. Keep AAC/MP3 priming and
     # discard padding in their original compatible container instead of expanding audio.
     if (
         not normalize
         and (not lossless or prefer_mp4)
+        and (not source_sized or "mp4" in info.container.split(","))
         and info.audio_codec in {"aac", "mp3", "alac"}
     ):
         return AudioEncoding("copy", False, True)

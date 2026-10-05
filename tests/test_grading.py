@@ -150,6 +150,7 @@ async def test_every_local_look_preserves_frames_audio_and_dimensions(
 async def test_zero_strength_is_pixel_exact_and_color_grade_preserves_vfr(config, store, tmp_path):
     source = await clip(config, tmp_path / "source.mp4", vfr=True, duration=0.5)
     draft = Draft("zero", str(source), "source.mp4")
+    draft.settings.quality = Quality.LOSSLESS
     draft.settings.color_grade = ColorGrade(look=Look.BW, strength=0)
     neutral = await Renderer(config, store).render(draft, tmp_path / "neutral")
     assert await decoded(config, source, "yuv420p") == await decoded(
@@ -175,6 +176,7 @@ async def test_reference_lut_applies_known_channel_mapping_in_a_path_with_spaces
     path = cube(folder / "reference.cube", swap=True)
     store.add_asset(Asset("lut", "lut", "DNT1.cube", str(path)))
     draft = Draft("lut", str(source), "source.mp4")
+    draft.settings.quality = Quality.LOSSLESS
     draft.settings.color_grade = ColorGrade(look=Look.DNT1, strength=strength, lut_id="lut")
     result = await Renderer(config, store).render(draft, folder / "output")
     before = await decoded(config, source, "rgb24")

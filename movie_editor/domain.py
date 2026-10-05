@@ -35,6 +35,7 @@ class Transition(StrEnum):
 
 
 class Quality(StrEnum):
+    SOURCE = "source"
     HIGH = "high"
     LOSSLESS = "lossless"
     FAST = "fast"
@@ -203,7 +204,7 @@ class Settings:
     )
     intro_join: Join = field(default_factory=Join)
     outro_join: Join = field(default_factory=Join)
-    quality: Quality = Quality.LOSSLESS
+    quality: Quality = Quality.SOURCE
     delivery: Delivery = Delivery.FILE
     color_grade: ColorGrade = field(default_factory=ColorGrade)
 

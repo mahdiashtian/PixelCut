@@ -34,6 +34,7 @@ class MediaInfo:
     audio_layout: str = ""
     audio_format: str = ""
     container: str = ""
+    video_codec: str = "h264"
 
 
 def stream_duration(stream: dict) -> float | None:
@@ -136,6 +137,7 @@ async def inspect(path: Path, config: Config, count_frames: bool = False) -> Med
         audio.get("channel_layout") or "",
         audio.get("sample_fmt") or "",
         data.get("format", {}).get("format_name") or "",
+        video.get("codec_name") or "",
     )
     if not 0 < info.duration <= config.max_video_seconds:
         raise ValueError(f"مدت ویدیو باید بین صفر و {config.max_video_seconds} ثانیه باشد.")

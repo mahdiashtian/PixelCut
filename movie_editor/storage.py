@@ -5,7 +5,7 @@ import sqlite3
 from dataclasses import asdict
 from pathlib import Path
 
-from .domain import Asset, Draft, Look, Settings
+from .domain import Asset, Draft, Look, Quality, Settings
 
 
 class Store:
@@ -23,6 +23,25 @@ class Store:
                 name TEXT NOT NULL, status TEXT NOT NULL, detail TEXT NOT NULL
             );
         """)
+        self._migrate_source_quality()
+
+    def _migrate_source_quality(self) -> None:
+        # Earlier releases saved Lossless as the default, expanding compressed uploads.
+        # Migrate once; later explicit Lossless selections remain intentional.
+        if self.get("source_quality_migrated"):
+            return
+        with self.db:
+            for key in ("defaults", "draft"):
+                data = self.get(key)
+                if data:
+                    settings = data["settings"] if key == "draft" else data
+                    if settings.get("quality") != Quality.SOURCE:
+                        settings["quality"] = Quality.SOURCE
+                        self.db.execute(
+                            "UPDATE preferences SET value=? WHERE key=?",
+                            (json.dumps(data, ensure_ascii=False), key),
+                        )
+            self.db.execute("INSERT INTO preferences VALUES ('source_quality_migrated', 'true')")
 
     def close(self) -> None:
         self.db.close()

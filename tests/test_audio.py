@@ -287,6 +287,7 @@ async def test_whole_clip_keeps_all_decoded_samples_for_common_codecs(
 async def test_native_lossless_watermark_copies_compressed_audio(config, store, tmp_path, codec):
     source = await sound_clip(config, tmp_path / "source.mp4", codec=codec, duration=3)
     draft = Draft("native-copy", str(source), source.name, text="PixelCut")
+    draft.settings.quality = Quality.LOSSLESS
     assert draft.settings.quality == Quality.LOSSLESS
     result = await Renderer(config, store).render(draft, tmp_path / "render")
     assert result.path.suffix == ".mp4"
@@ -325,6 +326,7 @@ async def test_mixed_rates_keep_highest_rate_and_do_not_change_its_samples(confi
     )
     store.add_asset(Asset("intro", "intro", intro.name, str(intro)))
     draft = Draft("rates-sound", str(source), source.name, intro_id="intro")
+    draft.settings.quality = Quality.LOSSLESS
     with pytest.raises(ValueError, match="نرخ نمونه"):
         await Renderer(config, store).render(draft, tmp_path / "strict")
     draft.settings.quality = Quality.HIGH
@@ -417,6 +419,8 @@ async def test_three_concurrent_renders_keep_every_pixel_sample_and_frame(
             outro_id="three-outro",
         ),
     ]
+    for draft in drafts:
+        draft.settings.quality = Quality.LOSSLESS
     active, peak, arrived = 0, 0, 0
     barrier = asyncio.Event()
     original_encode = renderer_module.encode

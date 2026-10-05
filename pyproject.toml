@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "admin-movie-editor"
 version = "0.1.0"
-description = "Private Telethon video editor with a single-pass FFmpeg pipeline"
+description = "Private Telethon video editor with source-sized FFmpeg encoding"
 requires-python = ">=3.11"
 dependencies = [
     "Telethon>=1.45,<2",

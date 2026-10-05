@@ -14,9 +14,9 @@ def controller(config, store):
     return bot, client
 
 
-def test_default_is_lossless_and_cut_preserves_fps():
+def test_default_matches_source_size_and_cut_preserves_fps():
     draft = Draft("id", "source", "source")
-    assert draft.settings.quality == Quality.LOSSLESS
+    assert draft.settings.quality == Quality.SOURCE
     assert draft.settings.intro_join.kind == Transition.CUT
     assert draft.settings.outro_join.kind == Transition.CUT
     assert len(draft_buttons(draft)) == 6
@@ -58,6 +58,6 @@ async def test_compact_export_requires_explicit_choice_and_does_not_change_defau
     await bot.action("d:active", ["compact_render"])
     await bot.activity.task
     rendered = bot.jobs.run.call_args.args[0]
-    assert rendered.settings.quality == Quality.HIGH
-    assert bot.draft.settings.quality == Quality.LOSSLESS
-    assert store.defaults().quality == Quality.LOSSLESS
+    assert rendered.settings.quality == Quality.SOURCE
+    assert bot.draft.settings.quality == Quality.SOURCE
+    assert store.defaults().quality == Quality.SOURCE

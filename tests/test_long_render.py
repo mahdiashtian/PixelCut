@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from movie_editor.domain import Draft, Position
+from movie_editor.domain import Draft, Position, Quality
 from movie_editor.media.probe import inspect
 from movie_editor.media.process import capture
 from movie_editor.media.renderer import Renderer
@@ -14,7 +14,8 @@ from movie_editor.media.renderer import Renderer
 pytestmark = pytest.mark.integration
 
 
-async def test_thirty_minute_watermark_has_exact_pixels_frames_and_audio(config, store, tmp_path):
+@pytest.mark.parametrize("quality", [Quality.SOURCE, Quality.LOSSLESS])
+async def test_thirty_minute_watermark_has_frames_and_audio(config, store, tmp_path, quality):
     config = replace(config, max_render_seconds=600)
     source = tmp_path / "thirty-minutes.mp4"
     # Use real CFR frames and uninterrupted audio. Looping an AAC-containing MP4
@@ -55,6 +56,7 @@ async def test_thirty_minute_watermark_has_exact_pixels_frames_and_audio(config,
     assert before.frames == 54000
     assert before.duration == pytest.approx(1800, abs=0.001)
     draft = Draft("long", str(source), source.name, text="PixelCut")
+    draft.settings.quality = quality
     draft.settings.text_style.position = Position.BOTTOM_RIGHT
     folder = tmp_path / "render"
     stage = AsyncMock()
@@ -95,5 +97,9 @@ async def test_thirty_minute_watermark_has_exact_pixels_frames_and_audio(config,
             timeout=600,
         )
 
-    assert await frames(source) == await frames(result.path)
+    if quality == Quality.LOSSLESS:
+        assert await frames(source) == await frames(result.path)
+    else:
+        assert result.info.frames == 54000
+        assert result.path.stat().st_size <= source.stat().st_size * 1.25 + 8192
     # Renderer has already compared the frame count and all decoded audio samples/timestamps.
