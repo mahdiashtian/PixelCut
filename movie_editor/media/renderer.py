@@ -321,13 +321,11 @@ class Renderer:
         if not preview and len(segments) == 1 and draft.trim_start == 0 and draft.trim_end is None:
             if stage:
                 await stage("در حال شمارش فریم‌ها؛ این بررسی برای فیلم بلند زمان می‌برد…")
-            # Count actual decoded frames if the container does not expose a frame count.
-            original_count = main.frames
-            if original_count is None:
-                original_count = (await inspect(paths[0], self.config, count_frames=True)).frames
+            # MP4 edit lists can hide pre-roll packets while nb_frames still counts them.
+            # Compare decoded frames on both sides rather than trusting container counts.
+            original_count = (await inspect(paths[0], self.config, count_frames=True)).frames
+            result = await inspect(output, self.config, count_frames=True)
             output_count = result.frames
-            if output_count is None:
-                output_count = (await inspect(output, self.config, count_frames=True)).frames
             if original_count is not None and output_count != original_count:
                 raise ValueError("تعداد فریم خروجی با ورودی متفاوت است؛ خروجی ارسال نشد.")
         notice = (

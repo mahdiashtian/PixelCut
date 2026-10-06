@@ -15,6 +15,43 @@ from movie_editor.storage import Store
 from .test_media import clip, pcm, timestamps
 
 
+@pytest.mark.integration
+@pytest.mark.parametrize("quality", [Quality.SOURCE, Quality.LOSSLESS])
+async def test_mp4_edit_list_counts_decoded_frames_without_hidden_preroll(
+    config, store, tmp_path, quality
+):
+    full = await clip(config, tmp_path / "full.mp4", fps="30", duration=4, audio=False)
+    source = tmp_path / "cut.mp4"
+    # A stream-copy cut starts between keyframes: nb_frames includes hidden pre-roll.
+    await capture(
+        [
+            config.ffmpeg,
+            "-v",
+            "error",
+            "-y",
+            "-ss",
+            "1.1",
+            "-i",
+            str(full),
+            "-t",
+            "1.5",
+            "-c",
+            "copy",
+            str(source),
+        ]
+    )
+    metadata = await inspect(source, config)
+    decoded = await inspect(source, config, count_frames=True)
+    assert metadata.frames > decoded.frames
+    draft = Draft("edit-list", str(source), source.name, text="PixelCut")
+    draft.settings.quality = quality
+    result = await Renderer(config, store).render(draft, tmp_path / "render")
+    assert result.info.frames == decoded.frames
+    assert await timestamps(config, result.path) == pytest.approx(
+        await timestamps(config, source), abs=0.000501
+    )
+
+
 async def similarity(config, source, output, folder, filters="crop=320:80:0:0"):
     await capture(
         [
