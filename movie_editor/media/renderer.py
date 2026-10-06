@@ -74,6 +74,7 @@ class Renderer:
                 for i, s in enumerate(segments)
             ]
         lossless = draft.settings.quality == Quality.LOSSLESS
+        source_sized = draft.settings.quality == Quality.SOURCE
         if len(segments) > 1 and not draft.mute:
             for segment in segments:
                 if segment.start == 0 and segment.end is None:
@@ -127,13 +128,12 @@ class Renderer:
             filtered=graph.audio is not None,
             lossless=lossless,
             muted=draft.mute,
-            normalize=graph.copy_audio and main.video_start != 0,
-            source_sized=draft.settings.quality == Quality.SOURCE,
+            normalize=graph.copy_audio and main.video_start != 0 and not source_sized,
+            source_sized=source_sized,
             prefer_mp4=(
                 lossless and graph.pixel_format != "bgr0" and "mp4" in main.container.split(",")
             ),
         )
-        source_sized = draft.settings.quality == Quality.SOURCE
         if source_sized and stage:
             await stage("در حال محاسبهٔ حجم متناسب با ویدیوی ورودی…")
         rate_plan = (
@@ -164,7 +164,7 @@ class Renderer:
             args.extend(["-map", f"[{graph.audio}]"])
         elif graph.copy_audio:
             args.extend(["-map", f"0:{main.audio_index}"])
-            if main.video_start:
+            if main.video_start and not source_sized:
                 args.extend(["-af", f"asetpts=PTS-{main.video_start:.9f}/TB"])
         if audio_plan.codec is None:
             args.append("-an")
@@ -243,6 +243,9 @@ class Renderer:
             if value not in {"unknown", "reserved", "unspecified"}:
                 args.extend([flag, value])
         args.extend(["-max_interleave_delta", "1000000", "-progress", "pipe:1", "-nostats"])
+        if source_sized and graph.copy_audio:
+            # Do not let negative encoder DTS shift the original whole-clip A/V clock.
+            args.extend(["-avoid_negative_ts", "disabled"])
 
         def watch_output() -> None:
             check_resources(self.config, output, multipart=True)

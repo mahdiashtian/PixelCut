@@ -47,15 +47,31 @@ async def similarity(config, source, output, folder, filters="crop=320:80:0:0"):
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("container,vfr", [("mp4", False), ("mp4", True), ("mkv", True)])
+@pytest.mark.parametrize(
+    "container,vfr,offset",
+    [("mp4", False, 0), ("mp4", True, 0), ("mkv", True, 0), ("mkv", True, 0.24)],
+)
 async def test_default_watermark_keeps_source_size_frames_timestamps_and_sound(
-    config, store, tmp_path, container, vfr
+    config, store, tmp_path, container, vfr, offset
 ):
     source = await clip(config, tmp_path / "source.mp4", fps="30", duration=8, vfr=vfr)
     if container == "mkv":
         converted = tmp_path / "source.mkv"
         await capture(
-            [config.ffmpeg, "-v", "error", "-y", "-i", str(source), "-c", "copy", str(converted)]
+            [
+                config.ffmpeg,
+                "-v",
+                "error",
+                "-y",
+                "-copyts",
+                "-itsoffset",
+                str(offset),
+                "-i",
+                str(source),
+                "-c",
+                "copy",
+                str(converted),
+            ]
         )
         source = converted
     draft = Draft("sized", str(source), source.name, text="PixelCut")
@@ -69,6 +85,9 @@ async def test_default_watermark_keeps_source_size_frames_timestamps_and_sound(
     assert (result.info.width, result.info.height) == (320, 180)
     assert result.path.stat().st_size <= source.stat().st_size * 1.25 + 8192
     assert result.info.audio_codec == "aac"
+    assert result.info.video_start == pytest.approx(
+        (await inspect(source, config)).video_start, abs=0.001
+    )
     assert await pcm(config, source) == await pcm(config, result.path)
     assert not list(folder.glob("source-rate*"))
     assert (folder / "ffmpeg.pass1.metrics.json").is_file()

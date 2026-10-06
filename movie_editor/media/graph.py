@@ -70,9 +70,14 @@ def build_graph(draft: Draft, segments: list[Segment], overlays: list[Overlay]) 
         common_layout([s.info for s in segments], strict=lossless) if filtered_audio else None
     )
     audio_samples = round(segments[0].duration * audio_layout.rate) if audio_layout else None
+    preserve_clock = copy_audio and draft.settings.quality == Quality.SOURCE
     for i, segment in enumerate(segments):
         trim = f"trim=start={segment.start:.9f}:duration={segment.duration:.9f},"
-        chain = f"[{i}:{segment.info.video_index}]{trim}setpts=PTS-STARTPTS"
+        # A full source-sized export keeps the original A/V clock. In particular,
+        # older MKV muxers can place video a few ms after AAC's first packet.
+        # Resetting video to zero would force an unnecessary decoded-audio encode.
+        clock = "PTS" if preserve_clock else "PTS-STARTPTS"
+        chain = f"[{i}:{segment.info.video_index}]{trim}setpts={clock}"
         if i != main_index:
             chain += (
                 f",scale={width}:{height}:force_original_aspect_ratio=decrease:flags=lanczos"
